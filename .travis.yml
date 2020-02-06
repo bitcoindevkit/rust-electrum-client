@@ -1,0 +1,23 @@
+language: rust
+rust:
+  - stable
+#  - 1.31.0 TODO: support the first 2018-edition toolchain
+before_script:
+  - rustup component add rustfmt
+# Run tests and check a few combinations of features
+script:
+  - cargo fmt -- --check --verbose
+  - cargo test --verbose --all
+  - cargo check --verbose --features=use-openssl
+  - cargo check --verbose --no-default-features --features=proxy
+  - cargo check --verbose --no-default-features --features=minimal
+  - cargo check --verbose --no-default-features --features=minimal,debug-calls
+  - cargo check --verbose --no-default-features --features=proxy,use-openssl
+  - cargo check --verbose --no-default-features --features=proxy,use-rustls
+
+before_cache:
+  - rm -rf "$TRAVIS_HOME/.cargo/registry/src"
+cache: cargo
+
+notifications:
+  email: false
