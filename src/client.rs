@@ -1,3 +1,7 @@
+//! Electrum client
+//!
+//! This module contains definitions of all the complex data structures that are returned by calls
+
 use std::collections::{BTreeMap, VecDeque};
 #[cfg(test)]
 use std::fs::File;
@@ -55,6 +59,20 @@ macro_rules! impl_batch_call {
     }};
 }
 
+/// Instance of an Electrum client
+///
+/// A `Client` maintains a constant connection with an Electrum server and exposes methods to
+/// interact with it. It can also subscribe and receive notifictations from the server about new
+/// blocks or activity on a specific *scriptPubKey*.
+///
+/// The `Client` is modeled in such a way that allows the external caller to have full control over
+/// its functionality: no threads or tasks are spawned internally to monitor the state of the
+/// connection. This allows the caller to control its behavior through some *polling* functions,
+/// and ultimately makes the library more lightweight and easier to embed into existing
+/// projects.
+///
+/// More transport methods can be used by manually creating an instance of this struct with an
+/// arbitray `S` type.
 #[derive(Debug)]
 pub struct Client<S>
 where
@@ -70,8 +88,11 @@ where
     calls: usize,
 }
 
-impl Client<TcpStream> {
-    pub fn new<A: ToSocketAddrs>(socket_addr: A) -> io::Result<Self> {
+/// Transport type used to establish a plaintext TCP connection with the server
+pub type ElectrumPlaintextStream = TcpStream;
+impl Client<ElectrumPlaintextStream> {
+    /// Creates a new plaintext client and tries to connect to `socket_addr`.
+    pub fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
         let stream = TcpStream::connect(socket_addr)?;
         let buf_reader = BufReader::new(stream.try_clone()?);
 
@@ -88,7 +109,12 @@ impl Client<TcpStream> {
 }
 
 #[cfg(feature = "use-openssl")]
-impl Client<ClonableStream<SslStream<TcpStream>>> {
+/// Transport type used to establish an OpenSSL TLS encrypted/authenticated connection with the server
+pub type ElectrumSslStream = ClonableStream<SslStream<TcpStream>>;
+#[cfg(feature = "use-openssl")]
+impl Client<ElectrumSslStream> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if `domain` is not
+    /// None, validates the server certificate.
     pub fn new_ssl<A: ToSocketAddrs>(socket_addr: A, domain: Option<&str>) -> Result<Self, Error> {
         let mut builder =
             SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
@@ -145,7 +171,15 @@ mod danger {
     any(feature = "default", feature = "use-rustls"),
     not(feature = "use-openssl")
 ))]
-impl Client<ClonableStream<StreamOwned<ClientSession, TcpStream>>> {
+/// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
+pub type ElectrumSslStream = ClonableStream<StreamOwned<ClientSession, TcpStream>>;
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+impl Client<ElectrumSslStream> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if `domain` is not
+    /// None, validates the server certificate against `webpki-root`'s list of Certificate Authorities.
     pub fn new_ssl<A: ToSocketAddrs>(socket_addr: A, domain: Option<&str>) -> Result<Self, Error> {
         let mut config = ClientConfig::new();
         if domain.is_none() {
@@ -183,7 +217,13 @@ impl Client<ClonableStream<StreamOwned<ClientSession, TcpStream>>> {
 }
 
 #[cfg(any(feature = "default", feature = "proxy"))]
-impl Client<ClonableStream<Socks5Stream>> {
+/// Transport type used to establish a connection to a server through a socks proxy
+pub type ElectrumProxyStream = ClonableStream<Socks5Stream>;
+#[cfg(any(feature = "default", feature = "proxy"))]
+impl Client<ElectrumProxyStream> {
+    /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as an
+    /// unauthenticated socks proxy server. The DNS resolution of `target_addr`, if required, is done
+    /// through the proxy. This allows to specify, for instance, `.onion` addresses.
     pub fn new_proxy<A: ToSocketAddrs, T: ToTargetAddr>(
         target_addr: T,
         proxy_addr: A,
@@ -250,6 +290,9 @@ impl<S: Read + Write> Client<S> {
         Ok(resp["result"].take())
     }
 
+    /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
+    /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
+    /// reflects the order in which the calls were made on the `Batch` struct.
     pub fn batch_call(&mut self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut id_map = BTreeMap::new();
         let mut raw = Vec::new();
@@ -333,6 +376,8 @@ impl<S: Read + Write> Client<S> {
         Ok(())
     }
 
+    /// Tries to read from the read buffer if any notifications were received since the last call
+    /// or `poll`, and processes them
     pub fn poll(&mut self) -> Result<(), Error> {
         // try to pull data from the stream
         self.buf_reader.fill_buf()?;
@@ -350,6 +395,7 @@ impl<S: Read + Write> Client<S> {
         Ok(())
     }
 
+    /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
     pub fn block_headers_subscribe(&mut self) -> Result<HeaderNotification, Error> {
         let req = Request::new("blockchain.headers.subscribe", vec![]);
         let value = self.call(req)?;
@@ -357,12 +403,15 @@ impl<S: Read + Write> Client<S> {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// Tries to pop one queued notification for a new block header that we might have received.
+    /// Returns `None` if there are no items in the queue.
     pub fn block_headers_poll(&mut self) -> Result<Option<HeaderNotification>, Error> {
         self.poll()?;
 
         Ok(self.headers.pop_front())
     }
 
+    /// Gets the block header for height `height`.
     pub fn block_header(&mut self, height: usize) -> Result<block::BlockHeader, Error> {
         let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
         let result = self.call(req)?;
@@ -374,6 +423,7 @@ impl<S: Read + Write> Client<S> {
         )?)?)
     }
 
+    /// Tries to fetch `count` block headers starting from `start_height`.
     pub fn block_headers(
         &mut self,
         start_height: usize,
@@ -397,6 +447,7 @@ impl<S: Read + Write> Client<S> {
         Ok(deserialized)
     }
 
+    /// Estimates the fee required in **Satoshis per kilobyte** to confirm a transaction in `number` blocks.
     pub fn estimate_fee(&mut self, number: usize) -> Result<f64, Error> {
         let req = Request::new("blockchain.estimatefee", vec![Param::Usize(number)]);
         let result = self.call(req)?;
@@ -406,6 +457,7 @@ impl<S: Read + Write> Client<S> {
             .ok_or_else(|| Error::InvalidResponse(result.clone()))
     }
 
+    /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
     pub fn relay_fee(&mut self) -> Result<f64, Error> {
         let req = Request::new("blockchain.relayfee", vec![]);
         let result = self.call(req)?;
@@ -415,6 +467,13 @@ impl<S: Read + Write> Client<S> {
             .ok_or_else(|| Error::InvalidResponse(result.clone()))
     }
 
+    /// Subscribes to notifications for activity on a specific *scriptPubKey*.
+    ///
+    /// Returns a [`ScriptStatus`](../types/type.ScriptStatus.html) when successful that represents
+    /// the current status for the requested script.
+    ///
+    /// Returns [`Error::AlreadySubscribed`](../types/enum.Error.html#variant.AlreadySubscribed) if
+    /// already subscribed to the same script.
     pub fn script_subscribe(&mut self, script: &Script) -> Result<ScriptStatus, Error> {
         let script_hash = script.to_electrum_scripthash();
 
@@ -434,6 +493,12 @@ impl<S: Read + Write> Client<S> {
         Ok(serde_json::from_value(value)?)
     }
 
+    /// Subscribes to notifications for activity on a specific *scriptPubKey*.
+    ///
+    /// Returns a `bool` with the server response when successful.
+    ///
+    /// Returns [`Error::NotSubscribed`](../types/enum.Error.html#variant.NotSubscribed) if
+    /// not subscribed to the script.
     pub fn script_unsubscribe(&mut self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
 
@@ -453,6 +518,7 @@ impl<S: Read + Write> Client<S> {
         Ok(answer)
     }
 
+    /// Tries to pop one queued notification for a the requested script. Returns `None` if there are no items in the queue.
     pub fn script_poll(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         self.poll()?;
 
@@ -464,6 +530,7 @@ impl<S: Read + Write> Client<S> {
         }
     }
 
+    /// Returns the balance for a *scriptPubKey*
     pub fn script_get_balance(&mut self, script: &Script) -> Result<GetBalanceRes, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.get_balance", params);
@@ -471,6 +538,9 @@ impl<S: Read + Write> Client<S> {
 
         Ok(serde_json::from_value(result)?)
     }
+    /// Batch version of [`script_get_balance`](#method.script_get_balance).
+    ///
+    /// Takes a list of scripts and returns a list of balance responses.
     pub fn batch_script_get_balance(
         &mut self,
         scripts: Vec<&Script>,
@@ -478,6 +548,7 @@ impl<S: Read + Write> Client<S> {
         impl_batch_call!(self, scripts, script_get_balance)
     }
 
+    /// Returns the history for a *scriptPubKey*
     pub fn script_get_history(&mut self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.get_history", params);
@@ -485,6 +556,9 @@ impl<S: Read + Write> Client<S> {
 
         Ok(serde_json::from_value(result)?)
     }
+    /// Batch version of [`script_get_history`](#method.script_get_history).
+    ///
+    /// Takes a list of scripts and returns a list of history responses.
     pub fn batch_script_get_history(
         &mut self,
         scripts: Vec<&Script>,
@@ -492,6 +566,7 @@ impl<S: Read + Write> Client<S> {
         impl_batch_call!(self, scripts, script_get_history)
     }
 
+    /// Returns the list of unspent outputs for a *scriptPubKey*
     pub fn script_list_unspent(&mut self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.listunspent", params);
@@ -499,6 +574,9 @@ impl<S: Read + Write> Client<S> {
 
         Ok(serde_json::from_value(result)?)
     }
+    /// Batch version of [`script_list_unspent`](#method.script_list_unspent).
+    ///
+    /// Takes a list of scripts and returns a list of a list of utxos.
     pub fn batch_script_list_unspent(
         &mut self,
         scripts: Vec<&Script>,
@@ -506,8 +584,9 @@ impl<S: Read + Write> Client<S> {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
 
-    pub fn transaction_get(&mut self, tx_hash: &Txid) -> Result<Transaction, Error> {
-        let params = vec![Param::String(tx_hash.to_hex())];
+    /// Gets the raw transaction with `txid`. Returns an error if not found.
+    pub fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
+        let params = vec![Param::String(txid.to_hex())];
         let req = Request::new("blockchain.transaction.get", params);
         let result = self.call(req)?;
 
@@ -517,13 +596,14 @@ impl<S: Read + Write> Client<S> {
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
         )?)?)
     }
-    pub fn batch_transaction_get(
-        &mut self,
-        tx_hashes: Vec<&Txid>,
-    ) -> Result<Vec<Transaction>, Error> {
-        impl_batch_call!(self, tx_hashes, transaction_get)
+    /// Batch version of [`transaction_get`](#method.transaction_get).
+    ///
+    /// Takes a list of `txids` and returns a list of transactions.
+    pub fn batch_transaction_get(&mut self, txids: Vec<&Txid>) -> Result<Vec<Transaction>, Error> {
+        impl_batch_call!(self, txids, transaction_get)
     }
 
+    /// Broadcasts a transaction to the network.
     pub fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
         let buffer: Vec<u8> = serialize(tx);
         let params = vec![Param::String(buffer.to_hex())];
@@ -533,6 +613,7 @@ impl<S: Read + Write> Client<S> {
         Ok(serde_json::from_value(result)?)
     }
 
+    /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     pub fn transaction_get_merkle(
         &mut self,
         txid: &Txid,
@@ -545,6 +626,7 @@ impl<S: Read + Write> Client<S> {
         Ok(serde_json::from_value(result)?)
     }
 
+    /// Returns the capabilities of the server.
     pub fn server_features(&mut self) -> Result<ServerFeaturesRes, Error> {
         let req = Request::new("server.features", vec![]);
         let result = self.call(req)?;
@@ -553,19 +635,20 @@ impl<S: Read + Write> Client<S> {
     }
 
     #[cfg(feature = "debug-calls")]
+    /// Returns the number of network calls made since the creation of the client.
     pub fn calls_made(&self) -> usize {
         self.calls
     }
 
     #[inline]
     #[cfg(feature = "debug-calls")]
-    pub fn increment_calls(&mut self) {
+    fn increment_calls(&mut self) {
         self.calls += 1;
     }
 
     #[inline]
     #[cfg(not(feature = "debug-calls"))]
-    pub fn increment_calls(&self) {}
+    fn increment_calls(&self) {}
 }
 
 #[cfg(test)]
