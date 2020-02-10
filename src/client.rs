@@ -55,6 +55,7 @@ macro_rules! impl_batch_call {
     }};
 }
 
+#[derive(Debug)]
 pub struct Client<S>
 where
     S: Read + Write,
