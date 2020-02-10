@@ -3,8 +3,6 @@
 //! This module contains definitions of all the complex data structures that are returned by calls
 
 use std::collections::{BTreeMap, VecDeque};
-#[cfg(test)]
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 
@@ -31,8 +29,6 @@ use socks::{Socks5Stream, ToTargetAddr};
 use stream::ClonableStream;
 
 use batch::Batch;
-#[cfg(test)]
-use test_stream::TestStream;
 use types::*;
 
 macro_rules! impl_batch_call {
@@ -72,8 +68,8 @@ pub struct Client<S>
 where
     S: Read + Write,
 {
-    stream: S,
-    buf_reader: BufReader<S>,
+    stream: ClonableStream<S>,
+    buf_reader: BufReader<ClonableStream<S>>,
 
     headers: VecDeque<HeaderNotification>,
     script_notifications: BTreeMap<ScriptHash, VecDeque<ScriptStatus>>,
@@ -82,7 +78,7 @@ where
     calls: usize,
 }
 
-impl<S> From<S> for Client<ClonableStream<S>>
+impl<S> From<S> for Client<S>
 where
     S: Read + Write,
 {
@@ -107,23 +103,14 @@ impl Client<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
     pub fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
         let stream = TcpStream::connect(socket_addr)?;
-        let buf_reader = BufReader::new(stream.try_clone()?);
 
-        Ok(Self {
-            stream,
-            buf_reader,
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
-
-            #[cfg(feature = "debug-calls")]
-            calls: 0,
-        })
+        Ok(stream.into())
     }
 }
 
 #[cfg(feature = "use-openssl")]
 /// Transport type used to establish an OpenSSL TLS encrypted/authenticated connection with the server
-pub type ElectrumSslStream = ClonableStream<SslStream<TcpStream>>;
+pub type ElectrumSslStream = SslStream<TcpStream>;
 #[cfg(feature = "use-openssl")]
 impl Client<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if `domain` is not
@@ -174,7 +161,7 @@ mod danger {
     not(feature = "use-openssl")
 ))]
 /// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
-pub type ElectrumSslStream = ClonableStream<StreamOwned<ClientSession, TcpStream>>;
+pub type ElectrumSslStream = StreamOwned<ClientSession, TcpStream>;
 #[cfg(all(
     any(feature = "default", feature = "use-rustls"),
     not(feature = "use-openssl")
@@ -209,7 +196,7 @@ impl Client<ElectrumSslStream> {
 
 #[cfg(any(feature = "default", feature = "proxy"))]
 /// Transport type used to establish a connection to a server through a socks proxy
-pub type ElectrumProxyStream = ClonableStream<Socks5Stream>;
+pub type ElectrumProxyStream = Socks5Stream;
 #[cfg(any(feature = "default", feature = "proxy"))]
 impl Client<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as an
@@ -223,21 +210,6 @@ impl Client<ElectrumProxyStream> {
         let stream = Socks5Stream::connect(proxy_addr, target_addr)?;
 
         Ok(stream.into())
-    }
-}
-
-#[cfg(test)]
-impl Client<TestStream> {
-    pub fn new_test(file: File) -> Self {
-        let stream = TestStream::new_out();
-        let buf_reader = BufReader::new(TestStream::new_in(file));
-
-        Self {
-            stream,
-            buf_reader,
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
-        }
     }
 }
 
@@ -650,8 +622,15 @@ impl<S: Read + Write> Client<S> {
 mod test {
     use std::fs::File;
     use std::io::Read;
+    use test_stream::TestStream;
 
     use client::Client;
+
+    impl Client<TestStream> {
+        pub fn new_test(file: File) -> Self {
+            TestStream::new(file).into()
+        }
+    }
 
     macro_rules! impl_test_prelude {
         ( $testcase:expr ) => {{
@@ -665,7 +644,7 @@ mod test {
             let mut data_out = File::open(format!("./test_data/{}.out", $testcase)).unwrap();
             let mut buffer = Vec::new();
             data_out.read_to_end(&mut buffer).unwrap();
-            let stream_buffer: Vec<u8> = $stream.into();
+            let stream_buffer = $stream.stream().lock().unwrap().buffer.clone();
 
             assert_eq!(
                 stream_buffer,

@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug)]
 pub struct ClonableStream<T: Read + Write>(Arc<Mutex<T>>);
 
 impl<T: Read + Write> Read for ClonableStream<T> {
@@ -28,5 +29,12 @@ impl<T: Read + Write> From<T> for ClonableStream<T> {
 impl<T: Read + Write> Clone for ClonableStream<T> {
     fn clone(&self) -> Self {
         ClonableStream(Arc::clone(&self.0))
+    }
+}
+
+#[cfg(test)]
+impl<T: Read + Write> ClonableStream<T> {
+    pub fn stream(&self) -> Arc<Mutex<T>> {
+        Arc::clone(&self.0)
     }
 }
