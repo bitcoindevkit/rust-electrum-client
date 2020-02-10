@@ -3,7 +3,7 @@
 //! This library provides an extendable Bitcoin-Electrum client that supports batch calls,
 //! notifications and multiple transport methods.
 //!
-//! By default this library is compiled with support for SSL servers using [`rustls`](https;//docs.rs/rustls) and support for
+//! By default this library is compiled with support for SSL servers using [`rustls`](https://docs.rs/rustls) and support for
 //! plaintext connections over a socks proxy, useful for Onion servers. Using different features,
 //! the SSL implementation can be removed or replaced with [`openssl`](https://docs.rs/openssl).
 //!
