@@ -28,12 +28,6 @@ use rustls::{ClientConfig, ClientSession, StreamOwned};
 #[cfg(any(feature = "default", feature = "proxy"))]
 use socks::{Socks5Stream, ToTargetAddr};
 
-#[cfg(any(
-    feature = "default",
-    feature = "use-rustls",
-    feature = "use-openssl",
-    feature = "proxy"
-))]
 use stream::ClonableStream;
 
 use batch::Batch;
@@ -88,6 +82,25 @@ where
     calls: usize,
 }
 
+impl<S> From<S> for Client<ClonableStream<S>>
+where
+    S: Read + Write,
+{
+    fn from(stream: S) -> Self {
+        let stream: ClonableStream<_> = stream.into();
+
+        Self {
+            buf_reader: BufReader::new(stream.clone()),
+            stream,
+            headers: VecDeque::new(),
+            script_notifications: BTreeMap::new(),
+
+            #[cfg(feature = "debug-calls")]
+            calls: 0,
+        }
+    }
+}
+
 /// Transport type used to establish a plaintext TCP connection with the server
 pub type ElectrumPlaintextStream = TcpStream;
 impl Client<ElectrumPlaintextStream> {
@@ -128,19 +141,8 @@ impl Client<ElectrumSslStream> {
         let stream = connector
             .connect(domain.unwrap_or("not.validated"), stream)
             .map_err(Error::SslHandshakeError)?;
-        let stream: ClonableStream<_> = stream.into();
 
-        let buf_reader = BufReader::new(stream.clone());
-
-        Ok(Self {
-            stream,
-            buf_reader,
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
-
-            #[cfg(feature = "debug-calls")]
-            calls: 0,
-        })
+        Ok(stream.into())
     }
 }
 
@@ -200,19 +202,8 @@ impl Client<ElectrumSslStream> {
                 .map_err(|_| Error::InvalidDNSNameError(domain.unwrap_or("<NONE>").to_string()))?,
         );
         let stream = StreamOwned::new(session, tcp_stream);
-        let stream: ClonableStream<_> = stream.into();
 
-        let buf_reader = BufReader::new(stream.clone());
-
-        Ok(Self {
-            stream,
-            buf_reader,
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
-
-            #[cfg(feature = "debug-calls")]
-            calls: 0,
-        })
+        Ok(stream.into())
     }
 }
 
@@ -230,19 +221,8 @@ impl Client<ElectrumProxyStream> {
     ) -> Result<Self, Error> {
         // TODO: support proxy credentials
         let stream = Socks5Stream::connect(proxy_addr, target_addr)?;
-        let stream: ClonableStream<_> = stream.into();
 
-        let buf_reader = BufReader::new(stream.clone());
-
-        Ok(Self {
-            stream,
-            buf_reader,
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
-
-            #[cfg(feature = "debug-calls")]
-            calls: 0,
-        })
+        Ok(stream.into())
     }
 }
 
@@ -541,10 +521,13 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`script_get_balance`](#method.script_get_balance).
     ///
     /// Takes a list of scripts and returns a list of balance responses.
-    pub fn batch_script_get_balance(
+    pub fn batch_script_get_balance<'s, I>(
         &mut self,
-        scripts: Vec<&Script>,
-    ) -> Result<Vec<GetBalanceRes>, Error> {
+        scripts: I,
+    ) -> Result<Vec<GetBalanceRes>, Error>
+    where
+        I: IntoIterator<Item = &'s Script>,
+    {
         impl_batch_call!(self, scripts, script_get_balance)
     }
 
@@ -559,10 +542,13 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`script_get_history`](#method.script_get_history).
     ///
     /// Takes a list of scripts and returns a list of history responses.
-    pub fn batch_script_get_history(
+    pub fn batch_script_get_history<'s, I>(
         &mut self,
-        scripts: Vec<&Script>,
-    ) -> Result<Vec<Vec<GetHistoryRes>>, Error> {
+        scripts: I,
+    ) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator<Item = &'s Script>,
+    {
         impl_batch_call!(self, scripts, script_get_history)
     }
 
@@ -577,10 +563,13 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`script_list_unspent`](#method.script_list_unspent).
     ///
     /// Takes a list of scripts and returns a list of a list of utxos.
-    pub fn batch_script_list_unspent(
+    pub fn batch_script_list_unspent<'s, I>(
         &mut self,
-        scripts: Vec<&Script>,
-    ) -> Result<Vec<Vec<ListUnspentRes>>, Error> {
+        scripts: I,
+    ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
+    where
+        I: IntoIterator<Item = &'s Script>,
+    {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
 
@@ -599,7 +588,13 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.
-    pub fn batch_transaction_get(&mut self, txids: Vec<&Txid>) -> Result<Vec<Transaction>, Error> {
+    pub fn batch_transaction_get<'t, I>(
+        &mut self,
+        txids: Vec<&Txid>,
+    ) -> Result<Vec<Transaction>, Error>
+    where
+        I: IntoIterator<Item = &'t Txid>,
+    {
         impl_batch_call!(self, txids, transaction_get)
     }
 

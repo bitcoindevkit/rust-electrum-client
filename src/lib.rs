@@ -39,12 +39,6 @@ extern crate webpki_roots;
 
 pub mod batch;
 pub mod client;
-#[cfg(any(
-    feature = "default",
-    feature = "use-rustls",
-    feature = "use-openssl",
-    feature = "proxy"
-))]
 mod stream;
 #[cfg(test)]
 mod test_stream;
