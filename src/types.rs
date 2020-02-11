@@ -226,6 +226,8 @@ pub enum Error {
     Message(String),
     /// Invalid domain name for an SSL certificate
     InvalidDNSNameError(String),
+    /// Missing domain while it was explicitly asked to validate it
+    MissingDomain,
 
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used

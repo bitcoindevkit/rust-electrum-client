@@ -49,6 +49,28 @@ macro_rules! impl_batch_call {
     }};
 }
 
+/// A trait for [`ToSocketAddrs`](https://doc.rust-lang.org/std/net/trait.ToSocketAddrs.html) that
+/// can also be turned into a domain. Used when an SSL client needs to validate the server's
+/// certificate.
+pub trait ToSocketAddrsDomain: ToSocketAddrs {
+    /// Returns the domain, if present
+    fn domain(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl ToSocketAddrsDomain for &str {
+    fn domain(&self) -> Option<&str> {
+        self.splitn(2, ':').next()
+    }
+}
+
+impl ToSocketAddrsDomain for (&str, u16) {
+    fn domain(&self) -> Option<&str> {
+        self.0.domain()
+    }
+}
+
 /// Instance of an Electrum client
 ///
 /// A `Client` maintains a constant connection with an Electrum server and exposes methods to
@@ -113,20 +135,26 @@ impl Client<ElectrumPlaintextStream> {
 pub type ElectrumSslStream = SslStream<TcpStream>;
 #[cfg(feature = "use-openssl")]
 impl Client<ElectrumSslStream> {
-    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if `domain` is not
-    /// None, validates the server certificate.
-    pub fn new_ssl<A: ToSocketAddrs>(socket_addr: A, domain: Option<&str>) -> Result<Self, Error> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
+    /// `validate_domain` is `true`, validate the server's certificate.
+    pub fn new_ssl<A: ToSocketAddrsDomain>(
+        socket_addr: A,
+        validate_domain: bool,
+    ) -> Result<Self, Error> {
         let mut builder =
             SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
         // TODO: support for certificate pinning
-        if domain.is_none() {
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+        } else {
             builder.set_verify(SslVerifyMode::NONE);
         }
         let connector = builder.build();
 
+        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
         let stream = TcpStream::connect(socket_addr)?;
         let stream = connector
-            .connect(domain.unwrap_or("not.validated"), stream)
+            .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
 
         Ok(stream.into())
@@ -167,26 +195,32 @@ pub type ElectrumSslStream = StreamOwned<ClientSession, TcpStream>;
     not(feature = "use-openssl")
 ))]
 impl Client<ElectrumSslStream> {
-    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if `domain` is not
-    /// None, validates the server certificate against `webpki-root`'s list of Certificate Authorities.
-    pub fn new_ssl<A: ToSocketAddrs>(socket_addr: A, domain: Option<&str>) -> Result<Self, Error> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
+    /// `validate_domain` is `true`, validate the server's certificate.
+    pub fn new_ssl<A: ToSocketAddrsDomain>(
+        socket_addr: A,
+        validate_domain: bool,
+    ) -> Result<Self, Error> {
         let mut config = ClientConfig::new();
-        if domain.is_none() {
-            config
-                .dangerous()
-                .set_certificate_verifier(std::sync::Arc::new(danger::NoCertificateVerification {}))
-        } else {
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+
             // TODO: cert pinning
             config
                 .root_store
                 .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        } else {
+            config
+                .dangerous()
+                .set_certificate_verifier(std::sync::Arc::new(danger::NoCertificateVerification {}))
         }
 
+        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
         let tcp_stream = TcpStream::connect(socket_addr)?;
         let session = ClientSession::new(
             &std::sync::Arc::new(config),
-            webpki::DNSNameRef::try_from_ascii_str(domain.unwrap_or("not.validated"))
-                .map_err(|_| Error::InvalidDNSNameError(domain.unwrap_or("<NONE>").to_string()))?,
+            webpki::DNSNameRef::try_from_ascii_str(&domain)
+                .map_err(|_| Error::InvalidDNSNameError(domain.clone()))?,
         );
         let stream = StreamOwned::new(session, tcp_stream);
 
@@ -477,7 +511,7 @@ impl<S: Read + Write> Client<S> {
         let script_hash = script.to_electrum_scripthash();
 
         match self.script_notifications.get_mut(&script_hash) {
-            None => return Err(Error::NotSubscribed(script_hash)),
+            None => Err(Error::NotSubscribed(script_hash)),
             Some(queue) => Ok(queue.pop_front()),
         }
     }
