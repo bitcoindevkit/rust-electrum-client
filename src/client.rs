@@ -566,6 +566,7 @@ impl<S: Read + Write> Client<S> {
 
         Ok(serde_json::from_value(result)?)
     }
+
     /// Batch version of [`script_list_unspent`](#method.script_list_unspent).
     ///
     /// Takes a list of scripts and returns a list of a list of utxos.
@@ -602,6 +603,17 @@ impl<S: Read + Write> Client<S> {
         I: IntoIterator<Item = &'t Txid>,
     {
         impl_batch_call!(self, txids, transaction_get)
+    }
+
+    /// Batch version of [`estimate_fee`](#method.estimate_fee).
+    ///
+    /// Takes a list of `numbers` of blocks and returns a list of fee required in
+    /// **Satoshis per kilobyte** to confirm a transaction in the given number of blocks.
+    pub fn batch_estimate_fee<'s, I>(&mut self, numbers: I) -> Result<Vec<f64>, Error>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        impl_batch_call!(self, numbers, estimate_fee)
     }
 
     /// Broadcasts a transaction to the network.
@@ -844,6 +856,18 @@ mod test {
         assert_eq!(resp.len(), 2);
         assert_eq!(resp[0].len(), 2);
         assert_eq!(resp[1].len(), 1);
+
+        impl_test_conclusion!(test_case, client.stream);
+    }
+
+    #[test]
+    fn test_batch_estimate_fee() {
+        let test_case = "batch_estimate_fee";
+        let mut client = impl_test_prelude!(test_case);
+
+        let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
+        assert_eq!(resp[0], 10.0);
+        assert_eq!(resp[1], 20.0);
 
         impl_test_conclusion!(test_case, client.stream);
     }

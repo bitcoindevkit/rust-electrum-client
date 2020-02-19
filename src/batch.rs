@@ -49,6 +49,13 @@ impl Batch {
         self.calls
             .push((String::from("blockchain.transaction.get"), params));
     }
+
+    /// Add one `blockchain.estimatefee` request to the batch queue
+    pub fn estimate_fee(&mut self, number: usize) {
+        let params = vec![Param::Usize(number)];
+        self.calls
+            .push((String::from("blockchain.estimatefee"), params));
+    }
 }
 
 impl std::iter::IntoIterator for Batch {
