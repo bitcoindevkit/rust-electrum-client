@@ -344,7 +344,11 @@ impl<S: Read + Write> Client<S> {
     ) -> Result<(), Error> {
         match method {
             "blockchain.headers.subscribe" => {
-                self.headers.push_back(serde_json::from_value(result)?)
+                if result.is_array() {
+                    for val in result.as_array().unwrap() {
+                        self.headers.push_back(serde_json::from_value(val.clone())?)
+                    }
+                }
             }
             "blockchain.scripthash.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
@@ -364,7 +368,14 @@ impl<S: Read + Write> Client<S> {
 
     /// Tries to read from the read buffer if any notifications were received since the last call
     /// or `poll`, and processes them
-    pub fn poll(&mut self) -> Result<(), Error> {
+    pub fn poll(&mut self, blocking: bool) -> Result<(), Error> {
+        if !blocking {
+            let mut ping = serde_json::to_vec(&Request::new("server.ping", vec![]))?;
+            ping.extend_from_slice(b"\n");
+            self.stream.write_all(&ping)?;
+            self.stream.flush()?;
+        }
+
         // try to pull data from the stream
         self.buf_reader.fill_buf()?;
 
@@ -391,8 +402,11 @@ impl<S: Read + Write> Client<S> {
 
     /// Tries to pop one queued notification for a new block header that we might have received.
     /// Returns `None` if there are no items in the queue.
-    pub fn block_headers_poll(&mut self) -> Result<Option<HeaderNotification>, Error> {
-        self.poll()?;
+    pub fn block_headers_poll(
+        &mut self,
+        blocking: bool,
+    ) -> Result<Option<HeaderNotification>, Error> {
+        self.poll(blocking)?;
 
         Ok(self.headers.pop_front())
     }
@@ -505,8 +519,12 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Tries to pop one queued notification for a the requested script. Returns `None` if there are no items in the queue.
-    pub fn script_poll(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
-        self.poll()?;
+    pub fn script_poll(
+        &mut self,
+        script: &Script,
+        blocking: bool,
+    ) -> Result<Option<ScriptStatus>, Error> {
+        self.poll(blocking)?;
 
         let script_hash = script.to_electrum_scripthash();
 
