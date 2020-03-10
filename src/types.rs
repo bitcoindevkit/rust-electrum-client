@@ -125,6 +125,8 @@ pub struct GetHistoryRes {
     pub height: i32,
     /// Txid of the transaction.
     pub tx_hash: Txid,
+    /// Fee of the transaction.
+    pub fee: Option<u64>,
 }
 
 /// Response to a [`script_list_unspent`](../client/struct.Client.html#method.script_list_unspent) request.
