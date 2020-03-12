@@ -597,7 +597,7 @@ impl<S: Read + Write> Client<S> {
     /// Takes a list of `txids` and returns a list of transactions.
     pub fn batch_transaction_get<'t, I>(
         &mut self,
-        txids: Vec<&Txid>,
+        txids: I,
     ) -> Result<Vec<Transaction>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
