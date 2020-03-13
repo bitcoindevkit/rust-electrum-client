@@ -609,7 +609,7 @@ impl<S: Read + Write> Client<S> {
     /// Takes a list of `heights` of blocks and returns a list of headers.
     pub fn batch_block_header<'s, I>(&mut self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
-        I: IntoIterator<Item = usize>,
+        I: IntoIterator<Item = u32>,
     {
         let headers_string: Result<Vec<String>, Error> =
             impl_batch_call!(self, heights, block_header);
