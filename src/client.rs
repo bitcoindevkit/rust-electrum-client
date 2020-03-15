@@ -9,11 +9,9 @@ use std::net::{TcpStream, ToSocketAddrs};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace};
 
-use bitcoin::blockdata::block;
-use bitcoin::blockdata::transaction::Transaction;
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -398,7 +396,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Gets the block header for height `height`.
-    pub fn block_header(&mut self, height: usize) -> Result<block::BlockHeader, Error> {
+    pub fn block_header(&mut self, height: usize) -> Result<BlockHeader, Error> {
         let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
         let result = self.call(req)?;
 
@@ -595,14 +593,30 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.
-    pub fn batch_transaction_get<'t, I>(
-        &mut self,
-        txids: Vec<&Txid>,
-    ) -> Result<Vec<Transaction>, Error>
+    pub fn batch_transaction_get<'t, I>(&mut self, txids: I) -> Result<Vec<Transaction>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
     {
-        impl_batch_call!(self, txids, transaction_get)
+        let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
+        txs_string?
+            .iter()
+            .map(|s| Ok(deserialize(&Vec::<u8>::from_hex(s)?)?))
+            .collect()
+    }
+
+    /// Batch version of [`block_header`](#method.block_header).
+    ///
+    /// Takes a list of `heights` of blocks and returns a list of headers.
+    pub fn batch_block_header<'s, I>(&mut self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    where
+        I: IntoIterator<Item = usize>,
+    {
+        let headers_string: Result<Vec<String>, Error> =
+            impl_batch_call!(self, heights, block_header);
+        headers_string?
+            .iter()
+            .map(|s| Ok(deserialize(&Vec::<u8>::from_hex(s)?)?))
+            .collect()
     }
 
     /// Batch version of [`estimate_fee`](#method.estimate_fee).
