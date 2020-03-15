@@ -16,6 +16,8 @@ static JSONRPC_2_0: &str = "2.0";
 /// A single parameter of a [`Request`](struct.Request.html)
 pub enum Param {
     /// Integer parameter
+    U32(u32),
+    /// Integer parameter
     Usize(usize),
     /// String parameter
     String(String),
