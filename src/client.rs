@@ -7,7 +7,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 
 #[allow(unused_imports)]
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
@@ -24,7 +24,7 @@ use rustls::{ClientConfig, ClientSession, StreamOwned};
 #[cfg(any(feature = "default", feature = "proxy"))]
 use socks::{Socks5Stream, ToTargetAddr};
 
-use stream::ClonableStream;
+use stream::{ClonableStream, ReconnectStream};
 
 use batch::Batch;
 use types::*;
@@ -86,7 +86,7 @@ impl ToSocketAddrsDomain for (&str, u16) {
 #[derive(Debug)]
 pub struct Client<S>
 where
-    S: Read + Write,
+    S: Read + Write + ReconnectStream,
 {
     stream: ClonableStream<S>,
     buf_reader: BufReader<ClonableStream<S>>,
@@ -98,12 +98,12 @@ where
     calls: usize,
 }
 
-impl<S> From<S> for Client<S>
+/*impl<S> From<S> for Client<S>
 where
-    S: Read + Write,
+    S: Read + Write + ReconnectStream,
 {
     fn from(stream: S) -> Self {
-        let stream: ClonableStream<_> = stream.into();
+        //let stream: ClonableStream<_> = stream.into();
 
         Self {
             buf_reader: BufReader::new(stream.clone()),
@@ -115,19 +115,31 @@ where
             calls: 0,
         }
     }
-}
+}*/
 
 /// Transport type used to establish a plaintext TCP connection with the server
 pub type ElectrumPlaintextStream = TcpStream;
 impl Client<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
     pub fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
-        let stream = TcpStream::connect(socket_addr)?;
+        // TODO: we should probably set the connection/read/write timeout on the socket
 
-        Ok(stream.into())
+        let socket_addr = socket_addr.to_socket_addrs()?.collect::<Vec<_>>();
+        let stream = ClonableStream::new(socket_addr)?;
+
+        Ok(Self {
+            buf_reader: BufReader::new(stream.clone()),
+            stream,
+            headers: VecDeque::new(),
+            script_notifications: BTreeMap::new(),
+
+            #[cfg(feature = "debug-calls")]
+            calls: 0,
+        })
     }
 }
 
+/*
 #[cfg(feature = "use-openssl")]
 /// Transport type used to establish an OpenSSL TLS encrypted/authenticated connection with the server
 pub type ElectrumSslStream = SslStream<TcpStream>;
@@ -244,28 +256,73 @@ impl Client<ElectrumProxyStream> {
         Ok(stream.into())
     }
 }
+*/
 
-impl<S: Read + Write> Client<S> {
+macro_rules! try_reconnect_attempts {
+    ($self: expr, $result_fn:expr, $attempts:expr, $sleep_ms:expr) => {{
+        let mut attempt = 0;
+        loop {
+            match $result_fn() {
+                Err(e) if attempt < $attempts => {
+                    warn!("Error {:?}, reconnection attempt: {}. Will sleep for {} ms, then we'll try to reconnect.", e, attempt, $sleep_ms);
+                    std::thread::sleep(std::time::Duration::from_millis($sleep_ms));
+
+                    if let Err(e) = $self.try_reconnect() {
+                        warn!("Attempt {} gave error {:?}", attempt, e);
+                    }
+
+                    attempt += 1;
+                },
+                Err(e) => break Err(e),
+                Ok(v) => break Ok(v),
+            }
+        }
+    }};
+}
+
+impl<S: Read + Write + ReconnectStream> Client<S>
+where
+    Error: From<<S as ReconnectStream>::Error>,
+{
+    fn try_reconnect(&mut self) -> Result<(), Error> {
+        // TODO: reattach all the notifications to the new stream
+
+        self.stream.try_reconnect()?;
+        self.buf_reader = BufReader::new(self.stream.clone());
+
+        Ok(())
+    }
+
     fn call(&mut self, req: Request) -> Result<serde_json::Value, Error> {
         let mut raw = serde_json::to_vec(&req)?;
         trace!("==> {}", String::from_utf8_lossy(&raw));
-
         raw.extend_from_slice(b"\n");
-        self.stream.write_all(&raw)?;
-        self.stream.flush()?;
 
-        self.increment_calls();
+        let result: Result<serde_json::Value, Error> = try_reconnect_attempts!(
+            self,
+            || {
+                self.stream.write_all(&raw)?;
+                self.stream.flush()?;
 
-        let mut resp = loop {
-            let raw = self.recv()?;
-            let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
+                self.increment_calls();
 
-            match resp["method"].take().as_str() {
-                Some(ref method) if method == &req.method => break resp,
-                Some(ref method) => self.handle_notification(method, resp["result"].take())?,
-                _ => break resp,
-            };
-        };
+                Ok(loop {
+                    let raw = self.recv()?;
+                    let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
+
+                    match resp["method"].take().as_str() {
+                        Some(ref method) if method == &req.method => break resp,
+                        Some(ref method) => {
+                            self.handle_notification(method, resp["result"].take())?
+                        }
+                        _ => break resp,
+                    };
+                })
+            },
+            100,
+            1000
+        ); // TODO: reduce the number of attempts
+        let mut resp = result?;
 
         if let Some(err) = resp.get("error") {
             return Err(Error::Protocol(err.clone()));
@@ -293,6 +350,7 @@ impl<S: Read + Write> Client<S> {
 
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
+        // TODO: handle errors
         self.stream.write_all(&raw)?;
         self.stream.flush()?;
 
@@ -328,7 +386,15 @@ impl<S: Read + Write> Client<S> {
 
     fn recv(&mut self) -> io::Result<Vec<u8>> {
         let mut resp = String::new();
-        self.buf_reader.read_line(&mut resp)?;
+        self.buf_reader
+            .read_line(&mut resp)
+            .and_then(|bytes_read| match bytes_read {
+                0 => Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "Unexpected EOF in recv()",
+                )),
+                v => Ok(v),
+            });
 
         trace!("<== {}", resp);
 
@@ -367,6 +433,7 @@ impl<S: Read + Write> Client<S> {
         self.buf_reader.fill_buf()?;
 
         while !self.buf_reader.buffer().is_empty() {
+            // TODO: handle errors
             let raw = self.recv()?;
             let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
 
