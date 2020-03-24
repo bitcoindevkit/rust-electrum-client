@@ -397,14 +397,19 @@ impl<S: Read + Write> Client<S> {
 
     /// Gets the block header for height `height`.
     pub fn block_header(&mut self, height: usize) -> Result<BlockHeader, Error> {
+        Ok(deserialize(&self.block_header_raw(height)?)?)
+    }
+
+    /// Gets the block header for height `height`.
+    pub fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
         let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
         let result = self.call(req)?;
 
-        Ok(deserialize(&Vec::<u8>::from_hex(
+        Ok(Vec::<u8>::from_hex(
             result
                 .as_str()
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
-        )?)?)
+        )?)
     }
 
     /// Tries to fetch `count` block headers starting from `start_height`.
@@ -578,29 +583,61 @@ impl<S: Read + Write> Client<S> {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
 
-    /// Gets the raw transaction with `txid`. Returns an error if not found.
+    /// Gets the transaction with `txid`. Returns an error if not found.
     pub fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
+        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
+    }
+    /// Gets the raw transaction with `txid`. Returns an error if not found.
+    pub fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new("blockchain.transaction.get", params);
         let result = self.call(req)?;
 
-        Ok(deserialize(&Vec::<u8>::from_hex(
+        Ok(Vec::<u8>::from_hex(
             result
                 .as_str()
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
-        )?)?)
+        )?)
     }
+
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.
     pub fn batch_transaction_get<'t, I>(&mut self, txids: I) -> Result<Vec<Transaction>, Error>
-    where
-        I: IntoIterator<Item = &'t Txid>,
+        where
+            I: IntoIterator<Item = &'t Txid>,
+    {
+        self.batch_transaction_get_raw(txids)?.iter()
+            .map(|s| Ok(deserialize(s)?))
+            .collect()
+    }
+
+    /// Batch version of [`transaction_get_raw`](#method.transaction_get_raw).
+    ///
+    /// Takes a list of `txids` and returns a list of transactions bytes.
+    pub fn batch_transaction_get_raw<'t, I>(&mut self, txids: I) -> Result<Vec<Vec<u8>>, Error>
+        where
+            I: IntoIterator<Item = &'t Txid>,
     {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
             .iter()
-            .map(|s| Ok(deserialize(&Vec::<u8>::from_hex(s)?)?))
+            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
+            .collect()
+    }
+
+    /// Batch version of [`block_header_raw`](#method.block_header_raw).
+    ///
+    /// Takes a list of `heights` of blocks and returns a list of block header bytes.
+    pub fn batch_block_header_raw<'s, I>(&mut self, heights: I) -> Result<Vec<Vec<u8>>, Error>
+        where
+            I: IntoIterator<Item = u32>,
+    {
+        let headers_string: Result<Vec<String>, Error> =
+            impl_batch_call!(self, heights, block_header);
+        headers_string?
+            .iter()
+            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
             .collect()
     }
 
@@ -611,11 +648,8 @@ impl<S: Read + Write> Client<S> {
     where
         I: IntoIterator<Item = u32>,
     {
-        let headers_string: Result<Vec<String>, Error> =
-            impl_batch_call!(self, heights, block_header);
-        headers_string?
-            .iter()
-            .map(|s| Ok(deserialize(&Vec::<u8>::from_hex(s)?)?))
+        self.batch_block_header_raw(heights)?.iter()
+            .map(|s| Ok(deserialize(s)?))
             .collect()
     }
 
