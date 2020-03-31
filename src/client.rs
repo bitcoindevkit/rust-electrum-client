@@ -400,7 +400,7 @@ impl<S: Read + Write> Client<S> {
         Ok(deserialize(&self.block_header_raw(height)?)?)
     }
 
-    /// Gets the block header for height `height`.
+    /// Gets the raw bytes of block header for height `height`.
     pub fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
         let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
         let result = self.call(req)?;
@@ -587,7 +587,8 @@ impl<S: Read + Write> Client<S> {
     pub fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
         Ok(deserialize(&self.transaction_get_raw(txid)?)?)
     }
-    /// Gets the raw transaction with `txid`. Returns an error if not found.
+
+    /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     pub fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new("blockchain.transaction.get", params);
@@ -604,20 +605,21 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Takes a list of `txids` and returns a list of transactions.
     pub fn batch_transaction_get<'t, I>(&mut self, txids: I) -> Result<Vec<Transaction>, Error>
-        where
-            I: IntoIterator<Item = &'t Txid>,
+    where
+        I: IntoIterator<Item = &'t Txid>,
     {
-        self.batch_transaction_get_raw(txids)?.iter()
+        self.batch_transaction_get_raw(txids)?
+            .iter()
             .map(|s| Ok(deserialize(s)?))
             .collect()
     }
 
     /// Batch version of [`transaction_get_raw`](#method.transaction_get_raw).
     ///
-    /// Takes a list of `txids` and returns a list of transactions bytes.
+    /// Takes a list of `txids` and returns a list of transactions raw bytes.
     pub fn batch_transaction_get_raw<'t, I>(&mut self, txids: I) -> Result<Vec<Vec<u8>>, Error>
-        where
-            I: IntoIterator<Item = &'t Txid>,
+    where
+        I: IntoIterator<Item = &'t Txid>,
     {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
@@ -628,10 +630,10 @@ impl<S: Read + Write> Client<S> {
 
     /// Batch version of [`block_header_raw`](#method.block_header_raw).
     ///
-    /// Takes a list of `heights` of blocks and returns a list of block header bytes.
+    /// Takes a list of `heights` of blocks and returns a list of block header raw bytes.
     pub fn batch_block_header_raw<'s, I>(&mut self, heights: I) -> Result<Vec<Vec<u8>>, Error>
-        where
-            I: IntoIterator<Item = u32>,
+    where
+        I: IntoIterator<Item = u32>,
     {
         let headers_string: Result<Vec<String>, Error> =
             impl_batch_call!(self, heights, block_header);
@@ -648,7 +650,8 @@ impl<S: Read + Write> Client<S> {
     where
         I: IntoIterator<Item = u32>,
     {
-        self.batch_block_header_raw(heights)?.iter()
+        self.batch_block_header_raw(heights)?
+            .iter()
             .map(|s| Ok(deserialize(s)?))
             .collect()
     }
@@ -664,14 +667,19 @@ impl<S: Read + Write> Client<S> {
         impl_batch_call!(self, numbers, estimate_fee)
     }
 
-    /// Broadcasts a transaction to the network.
-    pub fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
-        let buffer: Vec<u8> = serialize(tx);
-        let params = vec![Param::String(buffer.to_hex())];
+    /// Broadcasts the raw bytes of a transaction to the network.
+    pub fn transaction_broadcast_raw(&mut self, raw_tx: &[u8]) -> Result<Txid, Error> {
+        let params = vec![Param::String(raw_tx.to_hex())];
         let req = Request::new("blockchain.transaction.broadcast", params);
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
+    }
+
+    /// Broadcasts a transaction to the network.
+    pub fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
+        let buffer: Vec<u8> = serialize(tx);
+        self.transaction_broadcast_raw(&buffer)
     }
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
