@@ -242,13 +242,16 @@ pub enum Error {
     InvalidDNSNameError(String),
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
+    /// EOF while trying to read from the underlying stream
+    EOF,
 
-    #[cfg(feature = "use-openssl")]
-    /// Invalid OpenSSL method used
-    InvalidSslMethod(openssl::error::ErrorStack),
-    #[cfg(feature = "use-openssl")]
-    /// SSL Handshake failed with the server
-    SslHandshakeError(openssl::ssl::HandshakeError<std::net::TcpStream>),
+    #[cfg(any(feature = "default", feature = "tls"))]
+    /// TLS Error
+    TLS(native_tls::Error),
+
+    #[cfg(any(feature = "default", feature = "proxy"))]
+    /// Proxy Error
+    Proxy(tokio_socks::Error),
 }
 
 macro_rules! impl_error {
@@ -265,3 +268,9 @@ impl_error!(std::io::Error, IOError);
 impl_error!(serde_json::Error, JSON);
 impl_error!(bitcoin::hashes::hex::Error, Hex);
 impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
+
+#[cfg(any(feature = "default", feature = "tls"))]
+impl_error!(native_tls::Error, TLS);
+
+#[cfg(any(feature = "default", feature = "proxy"))]
+impl_error!(tokio_socks::Error, Proxy);

@@ -31,10 +31,3 @@ impl<T: Read + Write> Clone for ClonableStream<T> {
         ClonableStream(Arc::clone(&self.0))
     }
 }
-
-#[cfg(test)]
-impl<T: Read + Write> ClonableStream<T> {
-    pub fn stream(&self) -> Arc<Mutex<T>> {
-        Arc::clone(&self.0)
-    }
-}
