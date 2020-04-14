@@ -27,6 +27,7 @@ tokio = { version = "0.2", features = ["net", "io-util"] }
 futures = "0.3"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
+lazy_static = { version = "1.4" }
 
 # Optional dependencies
 tokio-tls = { version = "0.3", optional = true }
@@ -37,7 +38,7 @@ tokio-socks = { version = "0.2", optional = true }
 tokio = { version = "0.2", features = ["net", "io-util", "macros"] }
 
 [features]
-default = ["tokio-tls", "native-tls", "tokio-socks"]
+default = ["tls", "proxy"]
 no-sync = []
 minimal = []
 debug-calls = []

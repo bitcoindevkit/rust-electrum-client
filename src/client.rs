@@ -3,8 +3,8 @@
 //! This module contains definition of the main Client structure
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Mutex;
 
-use futures::executor::block_on;
 use futures::task;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -14,6 +14,7 @@ use tokio::io::{
     ReadHalf, WriteHalf,
 };
 use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace};
@@ -32,6 +33,17 @@ use tokio_socks::{tcp::Socks5Stream, IntoTargetAddr, ToProxyAddrs};
 
 use crate::batch::Batch;
 use crate::types::*;
+
+#[cfg(not(feature = "no-sync"))]
+lazy_static! {
+    static ref INTERNAL_RUNTIME: Mutex<Runtime> = Mutex::new(
+        RuntimeBuilder::new()
+            .basic_scheduler()
+            .enable_all()
+            .build()
+            .expect("Couldn't create the internal tokio runtime")
+    );
+}
 
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
@@ -56,7 +68,7 @@ macro_rules! impl_sync_version {
         #[doc=$doc]
         #[cfg(not(feature = "no-sync"))]
         pub fn $new_name(&mut self, $($arg:$type),*) -> $return {
-             block_on(self.$wrapped($($arg),*))
+             INTERNAL_RUNTIME.lock().expect("Couldn't lock on the internal runtime mutex").block_on(self.$wrapped($($arg),*))
         }
     };
 
@@ -67,7 +79,7 @@ macro_rules! impl_sync_version {
         where
             I: IntoIterator<Item = $iter_item>
         {
-             block_on(self.$wrapped($($arg),*))
+             INTERNAL_RUNTIME.lock().expect("Couldn't lock on the internal runtime mutex").block_on(self.$wrapped($($arg),*))
         }
     };
 
@@ -78,7 +90,7 @@ macro_rules! impl_sync_version {
         where
             I: IntoIterator<Item = &'a $iter_item>
         {
-             block_on(self.$wrapped($($arg),*))
+             INTERNAL_RUNTIME.lock().expect("Couldn't lock on the internal runtime mutex").block_on(self.$wrapped($($arg),*))
         }
     };
 
@@ -166,8 +178,12 @@ impl Client<ElectrumPlaintextStream> {
     }
 
     /// Synchronous constructor. Creates a new plaintext client and tries to connect to `socket_addr`.
+    #[cfg(not(feature = "no-sync"))]
     pub fn sync_new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
-        block_on(Self::new(socket_addr))
+        INTERNAL_RUNTIME
+            .lock()
+            .expect("Couldn't lock on the internal runtime mutex")
+            .block_on(Self::new(socket_addr))
     }
 }
 
@@ -196,11 +212,15 @@ impl Client<ElectrumTlsStream> {
 
     /// Synchronous constructor. Creates a new TLS client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
+    #[cfg(not(feature = "no-sync"))]
     pub fn sync_new_tls<A: ToSocketAddrsDomain>(
         socket_addr: A,
         validate_domain: bool,
     ) -> Result<Self, Error> {
-        block_on(Self::new_tls(socket_addr, validate_domain))
+        INTERNAL_RUNTIME
+            .lock()
+            .expect("Couldn't lock on the internal runtime mutex")
+            .block_on(Self::new_tls(socket_addr, validate_domain))
     }
 }
 
@@ -239,26 +259,34 @@ impl Client<ElectrumProxyStream> {
     /// Synchronous constructor. Creates a new socks client and tries to connect to `target_addr` using
     /// `proxy_addr` as an unauthenticated socks proxy server. The DNS resolution of `target_addr`, if
     /// necessary, is done through the proxy. This allows to specify, for instance, `.onion` addresses.
+    #[cfg(not(feature = "no-sync"))]
     pub fn sync_new_proxy<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
         target_addr: T,
         proxy_addr: A,
     ) -> Result<Self, Error> {
-        block_on(Self::new_proxy(target_addr, proxy_addr))
+        INTERNAL_RUNTIME
+            .lock()
+            .expect("Couldn't lock on the internal runtime mutex")
+            .block_on(Self::new_proxy(target_addr, proxy_addr))
     }
 
     /// Synchronous version of [`new_proxy_with_credentials`](#method.new_proxy_with_credentials)
+    #[cfg(not(feature = "no-sync"))]
     pub fn sync_new_proxy_with_credentials<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
         target_addr: T,
         proxy_addr: A,
         username: &str,
         password: &str,
     ) -> Result<Self, Error> {
-        block_on(Self::new_proxy_with_credentials(
-            target_addr,
-            proxy_addr,
-            username,
-            password,
-        ))
+        INTERNAL_RUNTIME
+            .lock()
+            .expect("Couldn't lock on the internal runtime mutex")
+            .block_on(Self::new_proxy_with_credentials(
+                target_addr,
+                proxy_addr,
+                username,
+                password,
+            ))
     }
 }
 
