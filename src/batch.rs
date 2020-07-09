@@ -5,7 +5,7 @@
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::{Script, Txid};
 
-use crate::types::{Param, ToElectrumScriptHash};
+use types::{Param, ToElectrumScriptHash};
 
 /// Helper structure that caches all the requests before they are actually sent to the server.
 ///

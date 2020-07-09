@@ -1,19 +1,10 @@
 //! Electrum client
 //!
-//! This module contains definition of the main Client structure
+//! This module contains definitions of all the complex data structures that are returned by calls
 
 use std::collections::{BTreeMap, VecDeque};
-
-use futures::executor::block_on;
-use futures::task;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use tokio::io::{
-    split, AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader,
-    ReadHalf, WriteHalf,
-};
-use tokio::net::{TcpStream, ToSocketAddrs};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace};
@@ -22,16 +13,21 @@ use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
-#[cfg(any(feature = "default", feature = "tls"))]
-use native_tls::TlsConnector;
-#[cfg(any(feature = "default", feature = "tls"))]
-use tokio_tls::TlsStream;
+#[cfg(feature = "use-openssl")]
+use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+use rustls::{ClientConfig, ClientSession, StreamOwned};
 
 #[cfg(any(feature = "default", feature = "proxy"))]
-use tokio_socks::{tcp::Socks5Stream, IntoTargetAddr, ToProxyAddrs};
+use socks::{Socks5Stream, ToTargetAddr};
 
-use crate::batch::Batch;
-use crate::types::*;
+use stream::ClonableStream;
+
+use batch::Batch;
+use types::*;
 
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
@@ -40,7 +36,7 @@ macro_rules! impl_batch_call {
             batch.$call(i);
         }
 
-        let resp = $self.batch_call(batch).await?;
+        let resp = $self.batch_call(batch)?;
         let mut answer = Vec::new();
 
         for x in resp {
@@ -49,39 +45,6 @@ macro_rules! impl_batch_call {
 
         Ok(answer)
     }};
-}
-
-macro_rules! impl_sync_version {
-    ( $doc:expr, $wrapped:ident, $new_name:ident, $return:ty, $( $arg:ident:$type:ty ),* ) => {
-        #[doc=$doc]
-        #[cfg(not(feature = "no-sync"))]
-        pub fn $new_name(&mut self, $($arg:$type),*) -> $return {
-             block_on(self.$wrapped($($arg),*))
-        }
-    };
-
-    ( $iter_item:ty, $doc:expr, $wrapped:ident, $new_name:ident, $return:ty, $( $arg:ident:$type:ty ),* ) => {
-        #[doc=$doc]
-        #[cfg(not(feature = "no-sync"))]
-        pub fn $new_name<'a, I>(&mut self, $($arg:$type),*) -> $return
-        where
-            I: IntoIterator<Item = $iter_item>
-        {
-             block_on(self.$wrapped($($arg),*))
-        }
-    };
-
-    ( $lifetime:tt, $iter_item:ty, $doc:expr, $wrapped:ident, $new_name:ident, $return:ty, $( $arg:ident:$type:ty ),* ) => {
-        #[doc=$doc]
-        #[cfg(not(feature = "no-sync"))]
-        pub fn $new_name<'a, I>(&mut self, $($arg:$type),*) -> $return
-        where
-            I: IntoIterator<Item = &'a $iter_item>
-        {
-             block_on(self.$wrapped($($arg),*))
-        }
-    };
-
 }
 
 /// A trait for [`ToSocketAddrs`](https://doc.rust-lang.org/std/net/trait.ToSocketAddrs.html) that
@@ -123,10 +86,10 @@ impl ToSocketAddrsDomain for (&str, u16) {
 #[derive(Debug)]
 pub struct Client<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: Read + Write,
 {
-    writer: WriteHalf<S>,
-    buf_reader: BufReader<ReadHalf<S>>,
+    stream: ClonableStream<S>,
+    buf_reader: BufReader<ClonableStream<S>>,
 
     headers: VecDeque<HeaderNotification>,
     script_notifications: BTreeMap<ScriptHash, VecDeque<ScriptStatus>>,
@@ -137,15 +100,14 @@ where
 
 impl<S> From<S> for Client<S>
 where
-    S: AsyncRead + AsyncWrite,
+    S: Read + Write,
 {
     fn from(stream: S) -> Self {
-        let (read, write) = split(stream);
+        let stream: ClonableStream<_> = stream.into();
 
         Self {
-            writer: write,
-            buf_reader: BufReader::new(read),
-
+            buf_reader: BufReader::new(stream.clone()),
+            stream,
             headers: VecDeque::new(),
             script_notifications: BTreeMap::new(),
 
@@ -159,48 +121,108 @@ where
 pub type ElectrumPlaintextStream = TcpStream;
 impl Client<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
-    pub async fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
-        let stream = TcpStream::connect(socket_addr).await?;
+    pub fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
+        let stream = TcpStream::connect(socket_addr)?;
 
         Ok(stream.into())
-    }
-
-    /// Synchronous constructor. Creates a new plaintext client and tries to connect to `socket_addr`.
-    pub fn sync_new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
-        block_on(Self::new(socket_addr))
     }
 }
 
-#[cfg(any(feature = "default", feature = "tls"))]
-/// Transport type used to establish a TLS encrypted/authenticated connection with the server
-pub type ElectrumTlsStream = TlsStream<TcpStream>;
-#[cfg(any(feature = "default", feature = "tls"))]
-impl Client<ElectrumTlsStream> {
-    /// Creates a new TLS client and tries to connect to `socket_addr`. Optionally, if
+#[cfg(feature = "use-openssl")]
+/// Transport type used to establish an OpenSSL TLS encrypted/authenticated connection with the server
+pub type ElectrumSslStream = SslStream<TcpStream>;
+#[cfg(feature = "use-openssl")]
+impl Client<ElectrumSslStream> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
-    pub async fn new_tls<A: ToSocketAddrsDomain>(
+    pub fn new_ssl<A: ToSocketAddrsDomain>(
         socket_addr: A,
         validate_domain: bool,
     ) -> Result<Self, Error> {
-        let connector = TlsConnector::builder()
-            .danger_accept_invalid_certs(!validate_domain)
-            .build()?;
-        let connector: tokio_tls::TlsConnector = connector.into();
+        let mut builder =
+            SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
+        // TODO: support for certificate pinning
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+        } else {
+            builder.set_verify(SslVerifyMode::NONE);
+        }
+        let connector = builder.build();
 
         let domain = socket_addr.domain().unwrap_or("NONE").to_string();
-        let stream = TcpStream::connect(socket_addr).await?;
-        let stream = connector.connect(&domain, stream).await?;
+        let stream = TcpStream::connect(socket_addr)?;
+        let stream = connector
+            .connect(&domain, stream)
+            .map_err(Error::SslHandshakeError)?;
 
         Ok(stream.into())
     }
+}
 
-    /// Synchronous constructor. Creates a new TLS client and tries to connect to `socket_addr`. Optionally, if
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+mod danger {
+    use rustls;
+    use webpki;
+
+    pub struct NoCertificateVerification {}
+
+    impl rustls::ServerCertVerifier for NoCertificateVerification {
+        fn verify_server_cert(
+            &self,
+            _roots: &rustls::RootCertStore,
+            _presented_certs: &[rustls::Certificate],
+            _dns_name: webpki::DNSNameRef<'_>,
+            _ocsp: &[u8],
+        ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
+            Ok(rustls::ServerCertVerified::assertion())
+        }
+    }
+}
+
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+/// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
+pub type ElectrumSslStream = StreamOwned<ClientSession, TcpStream>;
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+impl Client<ElectrumSslStream> {
+    /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
-    pub fn sync_new_tls<A: ToSocketAddrsDomain>(
+    pub fn new_ssl<A: ToSocketAddrsDomain>(
         socket_addr: A,
         validate_domain: bool,
     ) -> Result<Self, Error> {
-        block_on(Self::new_tls(socket_addr, validate_domain))
+        let mut config = ClientConfig::new();
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+
+            // TODO: cert pinning
+            config
+                .root_store
+                .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        } else {
+            config
+                .dangerous()
+                .set_certificate_verifier(std::sync::Arc::new(danger::NoCertificateVerification {}))
+        }
+
+        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
+        let tcp_stream = TcpStream::connect(socket_addr)?;
+        let session = ClientSession::new(
+            &std::sync::Arc::new(config),
+            webpki::DNSNameRef::try_from_ascii_str(&domain)
+                .map_err(|_| Error::InvalidDNSNameError(domain.clone()))?,
+        );
+        let stream = StreamOwned::new(session, tcp_stream);
+
+        Ok(stream.into())
     }
 }
 
@@ -210,70 +232,32 @@ pub type ElectrumProxyStream = Socks5Stream;
 #[cfg(any(feature = "default", feature = "proxy"))]
 impl Client<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as an
-    /// unauthenticated socks proxy server. The DNS resolution of `target_addr`, if necessary, is done
+    /// unauthenticated socks proxy server. The DNS resolution of `target_addr`, if required, is done
     /// through the proxy. This allows to specify, for instance, `.onion` addresses.
-    pub async fn new_proxy<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
+    pub fn new_proxy<A: ToSocketAddrs, T: ToTargetAddr>(
         target_addr: T,
         proxy_addr: A,
     ) -> Result<Self, Error> {
-        let stream = Socks5Stream::connect(proxy_addr, target_addr).await?;
+        // TODO: support proxy credentials
+        let stream = Socks5Stream::connect(proxy_addr, target_addr)?;
 
         Ok(stream.into())
-    }
-
-    /// Creates a new socks client and connects to the proxy server using the provided `username`
-    /// and `password`. Alternative to [`new_proxy`](#method.new_proxy)
-    pub async fn new_proxy_with_credentials<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
-        target_addr: T,
-        proxy_addr: A,
-        username: &str,
-        password: &str,
-    ) -> Result<Self, Error> {
-        let stream =
-            Socks5Stream::connect_with_password(proxy_addr, target_addr, username, password)
-                .await?;
-
-        Ok(stream.into())
-    }
-
-    /// Synchronous constructor. Creates a new socks client and tries to connect to `target_addr` using
-    /// `proxy_addr` as an unauthenticated socks proxy server. The DNS resolution of `target_addr`, if
-    /// necessary, is done through the proxy. This allows to specify, for instance, `.onion` addresses.
-    pub fn sync_new_proxy<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
-        target_addr: T,
-        proxy_addr: A,
-    ) -> Result<Self, Error> {
-        block_on(Self::new_proxy(target_addr, proxy_addr))
-    }
-
-    /// Synchronous version of [`new_proxy_with_credentials`](#method.new_proxy_with_credentials)
-    pub fn sync_new_proxy_with_credentials<'t, A: ToProxyAddrs, T: IntoTargetAddr<'t>>(
-        target_addr: T,
-        proxy_addr: A,
-        username: &str,
-        password: &str,
-    ) -> Result<Self, Error> {
-        block_on(Self::new_proxy_with_credentials(
-            target_addr,
-            proxy_addr,
-            username,
-            password,
-        ))
     }
 }
 
-impl<S: AsyncRead + AsyncWrite> Client<S> {
-    async fn call<'a>(&mut self, req: Request<'a>) -> Result<serde_json::Value, Error> {
+impl<S: Read + Write> Client<S> {
+    fn call(&mut self, req: Request) -> Result<serde_json::Value, Error> {
         let mut raw = serde_json::to_vec(&req)?;
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
         raw.extend_from_slice(b"\n");
-        self.writer.write_all(&raw).await?;
+        self.stream.write_all(&raw)?;
+        self.stream.flush()?;
 
         self.increment_calls();
 
         let mut resp = loop {
-            let raw = self.recv().await?;
+            let raw = self.recv()?;
             let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
 
             match resp["method"].take().as_str() {
@@ -293,7 +277,7 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.
-    pub async fn batch_call(&mut self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
+    pub fn batch_call(&mut self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut id_map = BTreeMap::new();
         let mut raw = Vec::new();
         let mut answer = Vec::new();
@@ -309,12 +293,13 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
 
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
-        self.writer.write_all(&raw).await?;
+        self.stream.write_all(&raw)?;
+        self.stream.flush()?;
 
         self.increment_calls();
 
         while answer.len() < id_map.len() {
-            let raw = self.recv().await?;
+            let raw = self.recv()?;
             let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
 
             let resp = match resp["id"].as_u64() {
@@ -340,19 +325,10 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
         let answer = answer.into_iter().map(|mut x| x["result"].take()).collect();
         Ok(answer)
     }
-    impl_sync_version!(
-        "Synchronous version of [`batch_call`](#method.batch_call).",
-        batch_call,
-        sync_batch_call,
-        Result<Vec<serde_json::Value>, Error>,
-        batch: Batch
-    );
 
-    async fn recv(&mut self) -> Result<Vec<u8>, Error> {
+    fn recv(&mut self) -> io::Result<Vec<u8>> {
         let mut resp = String::new();
-        if self.buf_reader.read_line(&mut resp).await? == 0 {
-            return Err(Error::EOF);
-        }
+        self.buf_reader.read_line(&mut resp)?;
 
         trace!("<== {}", resp);
 
@@ -384,33 +360,15 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
         Ok(())
     }
 
-    fn internal_buf_reader_poll(&mut self) -> Result<Vec<u8>, Error> {
-        // try to pull data from the stream
-        let pin_buf_reader = Pin::new(&mut self.buf_reader);
-        let mut ctx = Context::from_waker(task::noop_waker_ref());
-        match pin_buf_reader.poll_fill_buf(&mut ctx) {
-            Poll::Ready(Ok(data)) if data.is_empty() => Err(Error::EOF),
-            Poll::Ready(Ok(data)) => Ok(data.into()),
-            Poll::Ready(Err(e)) => Err(e.into()),
-            _ => Ok(vec![]),
-        }
-    }
-
     /// Tries to read from the read buffer if any notifications were received since the last call
-    /// or `poll`, and processes them. Returns the number of notifications queued when successful.
-    pub fn poll(&mut self) -> Result<usize, Error> {
-        let data = self.internal_buf_reader_poll()?;
-        if data.is_empty() {
-            return Ok(0);
-        }
+    /// or `poll`, and processes them
+    pub fn poll(&mut self) -> Result<(), Error> {
+        // try to pull data from the stream
+        self.buf_reader.fill_buf()?;
 
-        let mut consumed_bytes = 0;
-        let mut notifications = 0;
-        for raw in data.split(|byte| *byte == '\n' as u8) {
-            consumed_bytes += raw.len() + 1;
-            notifications += 1;
-
-            let mut resp: serde_json::Value = serde_json::from_slice(raw)?;
+        while !self.buf_reader.buffer().is_empty() {
+            let raw = self.recv()?;
+            let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
 
             match resp["method"].take().as_str() {
                 Some(ref method) => self.handle_notification(method, resp["params"].take())?,
@@ -418,20 +376,16 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             }
         }
 
-        let pin_buf_reader = Pin::new(&mut self.buf_reader);
-        pin_buf_reader.consume(consumed_bytes);
-
-        Ok(notifications)
+        Ok(())
     }
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
-    pub async fn block_headers_subscribe(&mut self) -> Result<HeaderNotification, Error> {
+    pub fn block_headers_subscribe(&mut self) -> Result<HeaderNotification, Error> {
         let req = Request::new("blockchain.headers.subscribe", vec![]);
-        let value = self.call(req).await?;
+        let value = self.call(req)?;
 
         Ok(serde_json::from_value(value)?)
     }
-    impl_sync_version!("Synchronous version of [`block_headers_subscribe`](#method.block_headers_subscribe).", block_headers_subscribe, sync_block_headers_subscribe, Result<HeaderNotification, Error>, );
 
     /// Tries to pop one queued notification for a new block header that we might have received.
     /// Returns `None` if there are no items in the queue.
@@ -442,15 +396,14 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     }
 
     /// Gets the block header for height `height`.
-    pub async fn block_header(&mut self, height: usize) -> Result<BlockHeader, Error> {
-        Ok(deserialize(&self.block_header_raw(height).await?)?)
+    pub fn block_header(&mut self, height: usize) -> Result<BlockHeader, Error> {
+        Ok(deserialize(&self.block_header_raw(height)?)?)
     }
-    impl_sync_version!("Synchronous version of [`block_header`](#method.block_header).", block_header, sync_block_header, Result<BlockHeader, Error>, height: usize);
 
     /// Gets the raw bytes of block header for height `height`.
-    pub async fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
+    pub fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
         let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(Vec::<u8>::from_hex(
             result
@@ -458,16 +411,9 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
         )?)
     }
-    impl_sync_version!(
-        "Synchronous version of [`block_header_raw`](#method.block_header_raw).",
-        block_header_raw,
-        sync_block_header_raw,
-        Result<Vec<u8>, Error>,
-        height: usize
-    );
 
     /// Tries to fetch `count` block headers starting from `start_height`.
-    pub async fn block_headers(
+    pub fn block_headers(
         &mut self,
         start_height: usize,
         count: usize,
@@ -476,7 +422,7 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             "blockchain.block.headers",
             vec![Param::Usize(start_height), Param::Usize(count)],
         );
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
         for i in 0..deserialized.count {
@@ -489,29 +435,26 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
 
         Ok(deserialized)
     }
-    impl_sync_version!("Synchronous version of [`block_headers`](#method.block_headers).", block_headers, sync_block_headers, Result<GetHeadersRes, Error>, start_height: usize, count: usize);
 
     /// Estimates the fee required in **Satoshis per kilobyte** to confirm a transaction in `number` blocks.
-    pub async fn estimate_fee(&mut self, number: usize) -> Result<f64, Error> {
+    pub fn estimate_fee(&mut self, number: usize) -> Result<f64, Error> {
         let req = Request::new("blockchain.estimatefee", vec![Param::Usize(number)]);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         result
             .as_f64()
             .ok_or_else(|| Error::InvalidResponse(result.clone()))
     }
-    impl_sync_version!("Synchronous version of [`estimate_fee`](#method.estimate_fee).", estimate_fee, sync_estimate_fee, Result<f64, Error>, number: usize);
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
-    pub async fn relay_fee(&mut self) -> Result<f64, Error> {
+    pub fn relay_fee(&mut self) -> Result<f64, Error> {
         let req = Request::new("blockchain.relayfee", vec![]);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         result
             .as_f64()
             .ok_or_else(|| Error::InvalidResponse(result.clone()))
     }
-    impl_sync_version!("Synchronous version of [`relay_fee`](#method.relay_fee).", relay_fee, sync_relay_fee, Result<f64, Error>, );
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
     ///
@@ -520,7 +463,7 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     ///
     /// Returns [`Error::AlreadySubscribed`](../types/enum.Error.html#variant.AlreadySubscribed) if
     /// already subscribed to the same script.
-    pub async fn script_subscribe(&mut self, script: &Script) -> Result<ScriptStatus, Error> {
+    pub fn script_subscribe(&mut self, script: &Script) -> Result<ScriptStatus, Error> {
         let script_hash = script.to_electrum_scripthash();
 
         if self.script_notifications.contains_key(&script_hash) {
@@ -534,11 +477,10 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             "blockchain.scripthash.subscribe",
             vec![Param::String(script_hash.to_hex())],
         );
-        let value = self.call(req).await?;
+        let value = self.call(req)?;
 
         Ok(serde_json::from_value(value)?)
     }
-    impl_sync_version!("Synchronous version of [`script_subscribe`](#method.script_subscribe).", script_subscribe, sync_script_subscribe, Result<ScriptStatus, Error>, script: &Script);
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
     ///
@@ -546,7 +488,7 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     ///
     /// Returns [`Error::NotSubscribed`](../types/enum.Error.html#variant.NotSubscribed) if
     /// not subscribed to the script.
-    pub async fn script_unsubscribe(&mut self, script: &Script) -> Result<bool, Error> {
+    pub fn script_unsubscribe(&mut self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
 
         if !self.script_notifications.contains_key(&script_hash) {
@@ -557,14 +499,13 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             "blockchain.scripthash.unsubscribe",
             vec![Param::String(script_hash.to_hex())],
         );
-        let value = self.call(req).await?;
+        let value = self.call(req)?;
         let answer = serde_json::from_value(value)?;
 
         self.script_notifications.remove(&script_hash);
 
         Ok(answer)
     }
-    impl_sync_version!("Synchronous version of [`script_unsubscribe`](#method.script_unsubscribe).", script_unsubscribe, sync_script_unsubscribe, Result<bool, Error>, script: &Script);
 
     /// Tries to pop one queued notification for a the requested script. Returns `None` if there are no items in the queue.
     pub fn script_poll(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
@@ -579,18 +520,17 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     }
 
     /// Returns the balance for a *scriptPubKey*
-    pub async fn script_get_balance(&mut self, script: &Script) -> Result<GetBalanceRes, Error> {
+    pub fn script_get_balance(&mut self, script: &Script) -> Result<GetBalanceRes, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.get_balance", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!("Synchronous version of [`script_get_balance`](#method.script_get_balance).", script_get_balance, sync_script_get_balance, Result<GetBalanceRes, Error>, script: &Script);
     /// Batch version of [`script_get_balance`](#method.script_get_balance).
     ///
     /// Takes a list of scripts and returns a list of balance responses.
-    pub async fn batch_script_get_balance<'s, I>(
+    pub fn batch_script_get_balance<'s, I>(
         &mut self,
         scripts: I,
     ) -> Result<Vec<GetBalanceRes>, Error>
@@ -599,38 +539,19 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     {
         impl_batch_call!(self, scripts, script_get_balance)
     }
-    impl_sync_version!(
-        _,
-        Script,
-        "Synchronous version of [`batch_script_get_balance`](#method.batch_script_get_balance).",
-        batch_script_get_balance,
-        sync_batch_script_get_balance,
-        Result<Vec<GetBalanceRes>, Error>,
-        scripts: I
-    );
 
     /// Returns the history for a *scriptPubKey*
-    pub async fn script_get_history(
-        &mut self,
-        script: &Script,
-    ) -> Result<Vec<GetHistoryRes>, Error> {
+    pub fn script_get_history(&mut self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.get_history", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!(
-        "Synchronous version of [`script_get_history`](#method.script_get_history).",
-        script_get_history,
-        sync_script_get_history,
-        Result<Vec<GetHistoryRes>, Error>,
-        script: &Script
-    );
     /// Batch version of [`script_get_history`](#method.script_get_history).
     ///
     /// Takes a list of scripts and returns a list of history responses.
-    pub async fn batch_script_get_history<'s, I>(
+    pub fn batch_script_get_history<'s, I>(
         &mut self,
         scripts: I,
     ) -> Result<Vec<Vec<GetHistoryRes>>, Error>
@@ -639,38 +560,20 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     {
         impl_batch_call!(self, scripts, script_get_history)
     }
-    impl_sync_version!(
-        _,
-        Script,
-        "Synchronous version of [`batch_script_get_history`](#method.batch_script_get_history).",
-        batch_script_get_history,
-        sync_batch_script_get_history,
-        Result<Vec<Vec<GetHistoryRes>>, Error>,
-        scripts: I
-    );
 
     /// Returns the list of unspent outputs for a *scriptPubKey*
-    pub async fn script_list_unspent(
-        &mut self,
-        script: &Script,
-    ) -> Result<Vec<ListUnspentRes>, Error> {
+    pub fn script_list_unspent(&mut self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new("blockchain.scripthash.listunspent", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!(
-        "Synchronous version of [`script_list_unspent`](#method.script_list_unspent).",
-        script_list_unspent,
-        sync_script_list_unspent,
-        Result<Vec<ListUnspentRes>, Error>,
-        script: &Script
-    );
+
     /// Batch version of [`script_list_unspent`](#method.script_list_unspent).
     ///
     /// Takes a list of scripts and returns a list of a list of utxos.
-    pub async fn batch_script_list_unspent<'s, I>(
+    pub fn batch_script_list_unspent<'s, I>(
         &mut self,
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
@@ -679,27 +582,17 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
     {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
-    impl_sync_version!(
-        _,
-        Script,
-        "Synchronous version of [`batch_script_list_unspent`](#method.batch_script_list_unspent).",
-        batch_script_list_unspent,
-        sync_batch_script_list_unspent,
-        Result<Vec<Vec<ListUnspentRes>>, Error>,
-        scripts: I
-    );
 
     /// Gets the transaction with `txid`. Returns an error if not found.
-    pub async fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
-        Ok(deserialize(&self.transaction_get_raw(txid).await?)?)
+    pub fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
+        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
     }
-    impl_sync_version!("Synchronous version of [`transaction_get`](#method.transaction_get).", transaction_get, sync_transaction_get, Result<Transaction, Error>, txid: &Txid);
 
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
-    pub async fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
+    pub fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new("blockchain.transaction.get", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(Vec::<u8>::from_hex(
             result
@@ -707,46 +600,24 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
         )?)
     }
-    impl_sync_version!(
-        "Synchronous version of [`transaction_get_raw`](#method.transaction_get_raw).",
-        transaction_get_raw,
-        sync_transaction_get_raw,
-        Result<Vec<u8>, Error>,
-        txid: &Txid
-    );
+
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.
-    pub async fn batch_transaction_get<'t, I>(
-        &mut self,
-        txids: I,
-    ) -> Result<Vec<Transaction>, Error>
+    pub fn batch_transaction_get<'t, I>(&mut self, txids: I) -> Result<Vec<Transaction>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
     {
-        self.batch_transaction_get_raw(txids)
-            .await?
+        self.batch_transaction_get_raw(txids)?
             .iter()
             .map(|s| Ok(deserialize(s)?))
             .collect()
     }
-    impl_sync_version!(
-        _,
-        Txid,
-        "Synchronous version of [`batch_transaction_get`](#method.batch_transaction_get).",
-        batch_transaction_get,
-        sync_batch_transaction_get,
-        Result<Vec<Transaction>, Error>,
-        txids: I
-    );
 
     /// Batch version of [`transaction_get_raw`](#method.transaction_get_raw).
     ///
     /// Takes a list of `txids` and returns a list of transactions raw bytes.
-    pub async fn batch_transaction_get_raw<'t, I>(
-        &mut self,
-        txids: I,
-    ) -> Result<Vec<Vec<u8>>, Error>
+    pub fn batch_transaction_get_raw<'t, I>(&mut self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
     {
@@ -756,20 +627,11 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             .map(|s| Ok(Vec::<u8>::from_hex(s)?))
             .collect()
     }
-    impl_sync_version!(
-        _,
-        Txid,
-        "Synchronous version of [`batch_transaction_get_raw`](#method.batch_transaction_get_raw).",
-        batch_transaction_get_raw,
-        sync_batch_transaction_get_raw,
-        Result<Vec<Vec<u8>>, Error>,
-        txids: I
-    );
 
     /// Batch version of [`block_header_raw`](#method.block_header_raw).
     ///
     /// Takes a list of `heights` of blocks and returns a list of block header raw bytes.
-    pub async fn batch_block_header_raw<'s, I>(&mut self, heights: I) -> Result<Vec<Vec<u8>>, Error>
+    pub fn batch_block_header_raw<'s, I>(&mut self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = u32>,
     {
@@ -780,95 +642,66 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
             .map(|s| Ok(Vec::<u8>::from_hex(s)?))
             .collect()
     }
-    impl_sync_version!(
-        u32,
-        "Synchronous version of [`batch_block_header_raw`](#method.batch_block_header_raw).",
-        batch_block_header_raw,
-        sync_batch_block_header_raw,
-        Result<Vec<Vec<u8>>, Error>,
-        heights: I
-    );
 
     /// Batch version of [`block_header`](#method.block_header).
     ///
     /// Takes a list of `heights` of blocks and returns a list of headers.
-    pub async fn batch_block_header<'s, I>(&mut self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    pub fn batch_block_header<'s, I>(&mut self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
         I: IntoIterator<Item = u32>,
     {
-        self.batch_block_header_raw(heights)
-            .await?
+        self.batch_block_header_raw(heights)?
             .iter()
             .map(|s| Ok(deserialize(s)?))
             .collect()
     }
-    impl_sync_version!(
-        u32,
-        "Synchronous version of [`batch_block_header`](#method.batch_block_header).",
-        batch_block_header,
-        sync_batch_block_header,
-        Result<Vec<BlockHeader>, Error>,
-        heights: I
-    );
 
     /// Batch version of [`estimate_fee`](#method.estimate_fee).
     ///
     /// Takes a list of `numbers` of blocks and returns a list of fee required in
     /// **Satoshis per kilobyte** to confirm a transaction in the given number of blocks.
-    pub async fn batch_estimate_fee<'s, I>(&mut self, numbers: I) -> Result<Vec<f64>, Error>
+    pub fn batch_estimate_fee<'s, I>(&mut self, numbers: I) -> Result<Vec<f64>, Error>
     where
         I: IntoIterator<Item = usize>,
     {
         impl_batch_call!(self, numbers, estimate_fee)
     }
-    impl_sync_version!(
-        usize,
-        "Synchronous version of [`batch_estimate_fee`](#method.batch_estimate_fee).",
-        batch_estimate_fee,
-        sync_batch_estimate_fee,
-        Result<Vec<f64>, Error>,
-        numbers: I
-    );
 
     /// Broadcasts the raw bytes of a transaction to the network.
-    pub async fn transaction_broadcast_raw(&mut self, raw_tx: &[u8]) -> Result<Txid, Error> {
+    pub fn transaction_broadcast_raw(&mut self, raw_tx: &[u8]) -> Result<Txid, Error> {
         let params = vec![Param::String(raw_tx.to_hex())];
         let req = Request::new("blockchain.transaction.broadcast", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!("Synchronous version of [`transaction_broadcast_raw`](#method.transaction_broadcast_raw).", transaction_broadcast_raw, sync_transaction_broadcast_raw, Result<Txid, Error>, raw_tx: &[u8]);
 
     /// Broadcasts a transaction to the network.
-    pub async fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
+    pub fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
         let buffer: Vec<u8> = serialize(tx);
-        self.transaction_broadcast_raw(&buffer).await
+        self.transaction_broadcast_raw(&buffer)
     }
-    impl_sync_version!("Synchronous version of [`transaction_broadcast`](#method.transaction_broadcast).", transaction_broadcast, sync_transaction_broadcast, Result<Txid, Error>, tx: &Transaction);
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
-    pub async fn transaction_get_merkle(
+    pub fn transaction_get_merkle(
         &mut self,
         txid: &Txid,
         height: usize,
     ) -> Result<GetMerkleRes, Error> {
         let params = vec![Param::String(txid.to_hex()), Param::Usize(height)];
         let req = Request::new("blockchain.transaction.get_merkle", params);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!("Synchronous version of [`transaction_get_merkle`](#method.transaction_get_merkle).", transaction_get_merkle, sync_transaction_get_merkle, Result<GetMerkleRes, Error>, txid: &Txid, height: usize);
 
     /// Returns the capabilities of the server.
-    pub async fn server_features(&mut self) -> Result<ServerFeaturesRes, Error> {
+    pub fn server_features(&mut self) -> Result<ServerFeaturesRes, Error> {
         let req = Request::new("server.features", vec![]);
-        let result = self.call(req).await?;
+        let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
     }
-    impl_sync_version!("Synchronous version of [`server_features`](#method.server_features).", server_features, sync_server_features, Result<ServerFeaturesRes, Error>, );
 
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
@@ -891,9 +724,9 @@ impl<S: AsyncRead + AsyncWrite> Client<S> {
 mod test {
     use std::fs::File;
     use std::io::Read;
+    use test_stream::TestStream;
 
-    use crate::client::Client;
-    use crate::test_stream::TestStream;
+    use client::Client;
 
     impl Client<TestStream> {
         pub fn new_test(file: File) -> Self {
@@ -909,13 +742,11 @@ mod test {
     }
 
     macro_rules! impl_test_conclusion {
-        ( $testcase:expr, $client:expr ) => {
+        ( $testcase:expr, $stream:expr ) => {
             let mut data_out = File::open(format!("./test_data/{}.out", $testcase)).unwrap();
             let mut buffer = Vec::new();
             data_out.read_to_end(&mut buffer).unwrap();
-            let reader = $client.buf_reader.into_inner();
-            let test_stream = reader.unsplit($client.writer);
-            let stream_buffer = test_stream.buffer;
+            let stream_buffer = $stream.stream().lock().unwrap().buffer.clone();
 
             assert_eq!(
                 stream_buffer,
@@ -932,7 +763,7 @@ mod test {
         let test_case = "server_features_simple";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_server_features().unwrap();
+        let resp = client.server_features().unwrap();
         assert_eq!(resp.server_version, "ElectrumX 1.0.17");
         assert_eq!(
             resp.genesis_hash,
@@ -947,17 +778,17 @@ mod test {
         assert_eq!(resp.hash_function, Some("sha256".into()));
         assert_eq!(resp.pruning, None);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
     #[test]
     fn test_relay_fee() {
         let test_case = "relay_fee";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_relay_fee().unwrap();
+        let resp = client.relay_fee().unwrap();
         assert_eq!(resp, 123.4);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -965,10 +796,10 @@ mod test {
         let test_case = "estimate_fee";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_estimate_fee(10).unwrap();
+        let resp = client.estimate_fee(10).unwrap();
         assert_eq!(resp, 10.0);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -976,12 +807,12 @@ mod test {
         let test_case = "block_header";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_block_header(500).unwrap();
+        let resp = client.block_header(500).unwrap();
         assert_eq!(resp.version, 536870912);
         assert_eq!(resp.time, 1578166214);
         assert_eq!(resp.nonce, 0);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -989,14 +820,14 @@ mod test {
         let test_case = "block_headers";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_block_headers(100, 4).unwrap();
+        let resp = client.block_headers(100, 4).unwrap();
         assert_eq!(resp.count, 4);
         assert_eq!(resp.max, 2016);
         assert_eq!(resp.headers.len(), 4);
 
         assert_eq!(resp.headers[0].time, 1563694949);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1007,13 +838,11 @@ mod test {
         let mut client = impl_test_prelude!(test_case);
 
         let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
-        let resp = client
-            .sync_script_get_balance(&addr.script_pubkey())
-            .unwrap();
+        let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
         assert_eq!(resp.confirmed, 0);
         assert_eq!(resp.unconfirmed, 130000000);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1027,9 +856,7 @@ mod test {
         let mut client = impl_test_prelude!(test_case);
 
         let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
-        let resp = client
-            .sync_script_get_history(&addr.script_pubkey())
-            .unwrap();
+        let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
         assert_eq!(resp.len(), 2);
         assert_eq!(
             resp[0].tx_hash,
@@ -1037,7 +864,7 @@ mod test {
                 .unwrap()
         );
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1051,9 +878,7 @@ mod test {
         let mut client = impl_test_prelude!(test_case);
 
         let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
-        let resp = client
-            .sync_script_list_unspent(&addr.script_pubkey())
-            .unwrap();
+        let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
         assert_eq!(resp.len(), 2);
         assert_eq!(resp[0].value, 30000000);
         assert_eq!(resp[0].height, 0);
@@ -1064,7 +889,7 @@ mod test {
                 .unwrap()
         );
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1082,13 +907,13 @@ mod test {
             .script_pubkey();
 
         let resp = client
-            .sync_batch_script_list_unspent(vec![&script_1, &script_2])
+            .batch_script_list_unspent(vec![&script_1, &script_2])
             .unwrap();
         assert_eq!(resp.len(), 2);
         assert_eq!(resp[0].len(), 2);
         assert_eq!(resp[1].len(), 1);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1096,11 +921,11 @@ mod test {
         let test_case = "batch_estimate_fee";
         let mut client = impl_test_prelude!(test_case);
 
-        let resp = client.sync_batch_estimate_fee(vec![10, 20]).unwrap();
+        let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
         assert_eq!(resp[0], 10.0);
         assert_eq!(resp[1], 20.0);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1112,7 +937,7 @@ mod test {
         let mut client = impl_test_prelude!(test_case);
 
         let resp = client
-            .sync_transaction_get(
+            .transaction_get(
                 &Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
                     .unwrap(),
             )
@@ -1120,7 +945,7 @@ mod test {
         assert_eq!(resp.version, 2);
         assert_eq!(resp.lock_time, 1376);
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1135,14 +960,14 @@ mod test {
         let buf = Vec::<u8>::from_hex("02000000000101f6cd5873d669cc2de550453623d9d10ed5b5ba906d81160ee3ab853ebcfffa0c0100000000feffffff02e22f82000000000017a914e229870f3af1b1a3aefc3452a4d2939b443e6eba8780c3c9010000000017a9145f859501ff79211aeb972633b782743dd3b31dab8702473044022046ff3b0618107e08bd25fb753e31542b8c23575d7e9faf43dd17f59727cfb9c902200a4f3837105808d810de01fcd63fb18e66a69026090dc72b66840d41e55c6bf3012103e531113bbca998f8d164235e3395db336d3ba03552d1bfaa83fd7cffe6e5c6c960050000").unwrap();
         let tx: bitcoin::Transaction = deserialize(&buf).unwrap();
 
-        let resp = client.sync_transaction_broadcast(&tx).unwrap();
+        let resp = client.transaction_broadcast(&tx).unwrap();
         assert_eq!(
             resp,
             Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
                 .unwrap()
         );
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
@@ -1154,7 +979,7 @@ mod test {
         let mut client = impl_test_prelude!(test_case);
 
         let resp = client
-            .sync_transaction_get_merkle(
+            .transaction_get_merkle(
                 &Txid::from_hex("2d64851151550e8c4d337f335ee28874401d55b358a66f1bafab2c3e9f48773d")
                     .unwrap(),
                 1234,
@@ -1172,6 +997,6 @@ mod test {
             ]
         );
 
-        impl_test_conclusion!(test_case, client);
+        impl_test_conclusion!(test_case, client.stream);
     }
 }

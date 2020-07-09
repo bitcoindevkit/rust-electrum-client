@@ -8,11 +8,12 @@ before_script:
 script:
   - cargo fmt -- --check --verbose
   - cargo test --verbose --all
+  - cargo check --verbose --features=use-openssl
   - cargo check --verbose --no-default-features --features=proxy
-  - cargo check --verbose --no-default-features --features=tls
   - cargo check --verbose --no-default-features --features=minimal
   - cargo check --verbose --no-default-features --features=minimal,debug-calls
-  - cargo check --verbose --no-default-features --features=minimal,no-sync
+  - cargo check --verbose --no-default-features --features=proxy,use-openssl
+  - cargo check --verbose --no-default-features --features=proxy,use-rustls
 
 before_cache:
   - rm -rf "$TRAVIS_HOME/.cargo/registry/src"

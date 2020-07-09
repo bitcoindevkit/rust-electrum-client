@@ -12,22 +12,34 @@
 //! # Example
 //!
 //! ```no_run
-//! use electrum_client::{Client, Error};
+//! use electrum_client::Client;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Error> {
-//!     let mut client = Client::new("kirsche.emzy.de:50001").await?;
-//!     let response = client.server_features().await?;
-//!
-//!     Ok(())
-//! }
+//! let mut client = Client::new("kirsche.emzy.de:50001")?;
+//! let response = client.server_features()?;
+//! # Ok::<(), electrum_client::Error>(())
 //! ```
 
 pub extern crate bitcoin;
-pub extern crate tokio;
+extern crate log;
+#[cfg(feature = "use-openssl")]
+extern crate openssl;
+#[cfg(all(
+    any(feature = "default", feature = "use-rustls"),
+    not(feature = "use-openssl")
+))]
+extern crate rustls;
+extern crate serde;
+extern crate serde_json;
+#[cfg(any(feature = "default", feature = "proxy"))]
+extern crate socks;
+#[cfg(any(feature = "use-rustls", feature = "default"))]
+extern crate webpki;
+#[cfg(any(feature = "use-rustls", feature = "default"))]
+extern crate webpki_roots;
 
 pub mod batch;
 pub mod client;
+mod stream;
 #[cfg(test)]
 mod test_stream;
 pub mod types;
