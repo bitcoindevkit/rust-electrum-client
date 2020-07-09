@@ -26,9 +26,6 @@
 pub extern crate bitcoin;
 pub extern crate tokio;
 
-#[macro_use]
-extern crate lazy_static;
-
 pub mod batch;
 pub mod client;
 #[cfg(test)]
