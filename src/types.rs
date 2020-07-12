@@ -40,7 +40,7 @@ pub struct Request<'a> {
 
 impl<'a> Request<'a> {
     /// Creates a new request with a default id
-    pub fn new(method: &'a str, params: Vec<Param>) -> Self {
+    fn new(method: &'a str, params: Vec<Param>) -> Self {
         Self {
             id: 0,
             jsonrpc: JSONRPC_2_0,

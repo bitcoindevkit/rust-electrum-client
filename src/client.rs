@@ -2,12 +2,17 @@
 //!
 //! This module contains definitions of all the complex data structures that are returned by calls
 
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::sync::{Mutex, RwLock, TryLockError};
+use std::time::Duration;
 
 #[allow(unused_imports)]
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::hashes::hex::{FromHex, ToHex};
@@ -88,8 +93,11 @@ pub struct Client<S>
 where
     S: Read + Write,
 {
-    stream: ClonableStream<S>,
-    buf_reader: BufReader<ClonableStream<S>>,
+    stream: Mutex<ClonableStream<S>>,
+    buf_reader: Mutex<BufReader<ClonableStream<S>>>,
+
+    last_id: AtomicUsize,
+    waiting_map: RwLock<BTreeMap<usize, Sender<serde_json::Value>>>,
 
     headers: VecDeque<HeaderNotification>,
     script_notifications: BTreeMap<ScriptHash, VecDeque<ScriptStatus>>,
@@ -106,8 +114,12 @@ where
         let stream: ClonableStream<_> = stream.into();
 
         Self {
-            buf_reader: BufReader::new(stream.clone()),
-            stream,
+            buf_reader: Mutex::new(BufReader::new(stream.clone())),
+            stream: Mutex::new(stream),
+
+            last_id: AtomicUsize::new(0),
+            waiting_map: RwLock::new(BTreeMap::new()),
+
             headers: VecDeque::new(),
             script_notifications: BTreeMap::new(),
 
@@ -250,21 +262,119 @@ impl<S: Read + Write> Client<S> {
         let mut raw = serde_json::to_vec(&req)?;
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
+        // Add our listener to the map before we send the request, to make sure we don't get a
+        // reply before the receiver is added
+        let (sender, mut receiver) = channel();
+        self.waiting_map.write().unwrap().insert(req.id, sender);
+
         raw.extend_from_slice(b"\n");
-        self.stream.write_all(&raw)?;
-        self.stream.flush()?;
+        let mut stream = self.stream.lock().unwrap();
+        stream.write_all(&raw)?;
+        stream.flush()?;
+        drop(stream); // release the lock
 
         self.increment_calls();
 
-        let mut resp = loop {
-            let raw = self.recv()?;
-            let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
+        let mut raw_resp = String::new();
+        let mut resp = 'outer: loop {
+            // Try to take the lock on the reader. If we manage to do so, we'll become the reader
+            // thread until we get our reponse
+            match self.buf_reader.try_lock() {
+                Ok(mut reader) => {
+                    trace!("Thread for message {} became the reader thread", req.id);
 
-            match resp["method"].take().as_str() {
-                Some(ref method) if method == &req.method => break resp,
-                Some(ref method) => self.handle_notification(method, resp["result"].take())?,
-                _ => break resp,
-            };
+                    // Start a loop to wait for our message
+                    loop {
+                        raw_resp.clear();
+
+                        reader.read_line(&mut raw_resp)?;
+                        trace!("<== {}", raw_resp);
+
+                        let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
+
+                        /*match resp["method"].take().as_str() {
+                            Some(ref method) if method == &req.method => break 'outer resp,
+                            Some(ref method) => self.handle_notification(method, resp["result"].take())?,
+                            _ => break resp,
+                        };*/
+
+                        // Normally there is and id, but it's missing for spontaneous notifications
+                        // from the server
+                        let resp_id = resp["id"]
+                            .as_str()
+                            .and_then(|s| s.parse().ok())
+                            .or(resp["id"].as_u64().map(|i| i as usize));
+                        match resp_id {
+                            Some(resp_id) if resp_id == req.id => {
+                                // We have a valid id and it's exactly the one we were waiting for!
+                                trace!(
+                                    "Reader thread {} received a response for its request",
+                                    req.id
+                                );
+
+                                // Remove ourselves from the "waiting map"
+                                let mut map = self.waiting_map.write().unwrap();
+                                map.remove(&req.id);
+
+                                // If the map is not empty, we select a random thread to become the
+                                // new reader thread. We close its channel to "wake it up"
+                                if !map.is_empty() {
+                                    let key = *map.keys().nth(0).unwrap();
+
+                                    trace!(
+                                        "There are still some other threads waiting, waking up {}",
+                                        key
+                                    );
+                                    map.remove(&key);
+                                }
+
+                                break 'outer resp;
+                            }
+                            Some(resp_id) => {
+                                // We have an id, but it's not our response. Notify the thread and
+                                // move on
+                                trace!(
+                                    "Reader thread {}, received response for {}",
+                                    req.id,
+                                    resp_id
+                                );
+
+                                let mut map = self.waiting_map.write().unwrap();
+                                if map.get(&resp_id).is_some() {
+                                    map.get(&resp_id).unwrap().send(resp).unwrap(); // TODO: unwrap
+                                    map.remove(&resp_id);
+                                } else {
+                                    warn!("Missing listener for {}", resp_id);
+                                }
+                            }
+                            None => {
+                                // No id, that's probably a notification
+                            }
+                        }
+                    }
+                }
+                Err(TryLockError::WouldBlock) => {
+                    // If we "WouldBlock" here it means that there's already a reader thread
+                    // running somewhere. So we wait for a message on our end of the channel.
+                    match receiver.recv() {
+                        // Received our response, returning it
+                        Ok(received) => break 'outer received,
+                        Err(_) => {
+                            // We were disconnected without a message, it means that the reader
+                            // thread is done and we were selected to become the next reader
+                            // thread. So we add ourselves back into the map and do another
+                            // iteration to take the reader lock
+                            trace!("Channel disconnected for {}", req.id);
+
+                            let (sender, _receiver) = channel();
+                            self.waiting_map.write().unwrap().insert(req.id, sender);
+
+                            receiver = _receiver;
+                        }
+                    }
+                }
+                e @ Err(TryLockError::Poisoned(_)) => e.map(|_| ()).expect("Poisoned reader mutex"), // panic if the reader mutex has been poisoned
+            }
         };
 
         if let Some(err) = resp.get("error") {
@@ -283,7 +393,7 @@ impl<S: Read + Write> Client<S> {
         let mut answer = Vec::new();
 
         for (i, (method, params)) in batch.into_iter().enumerate() {
-            let req = Request::new_id(i, &method, params);
+            let req = Request::new_id(self.last_id.fetch_add(1, Ordering::SeqCst), &method, params);
 
             raw.append(&mut serde_json::to_vec(&req)?);
             raw.extend_from_slice(b"\n");
@@ -293,8 +403,8 @@ impl<S: Read + Write> Client<S> {
 
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
-        self.stream.write_all(&raw)?;
-        self.stream.flush()?;
+        /* self.stream.write_all(&raw)?;
+        self.stream.flush()?; */
 
         self.increment_calls();
 
@@ -328,7 +438,7 @@ impl<S: Read + Write> Client<S> {
 
     fn recv(&mut self) -> io::Result<Vec<u8>> {
         let mut resp = String::new();
-        self.buf_reader.read_line(&mut resp)?;
+        // self.buf_reader.read_line(&mut resp)?;
 
         trace!("<== {}", resp);
 
@@ -364,9 +474,9 @@ impl<S: Read + Write> Client<S> {
     /// or `poll`, and processes them
     pub fn poll(&mut self) -> Result<(), Error> {
         // try to pull data from the stream
-        self.buf_reader.fill_buf()?;
+        // self.buf_reader.fill_buf()?;
 
-        while !self.buf_reader.buffer().is_empty() {
+        /* while !self.buf_reader.buffer().is_empty() {
             let raw = self.recv()?;
             let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
 
@@ -374,14 +484,18 @@ impl<S: Read + Write> Client<S> {
                 Some(ref method) => self.handle_notification(method, resp["params"].take())?,
                 _ => continue,
             }
-        }
+        } */
 
         Ok(())
     }
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
     pub fn block_headers_subscribe(&mut self) -> Result<HeaderNotification, Error> {
-        let req = Request::new("blockchain.headers.subscribe", vec![]);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.headers.subscribe",
+            vec![],
+        );
         let value = self.call(req)?;
 
         Ok(serde_json::from_value(value)?)
@@ -402,7 +516,11 @@ impl<S: Read + Write> Client<S> {
 
     /// Gets the raw bytes of block header for height `height`.
     pub fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
-        let req = Request::new("blockchain.block.header", vec![Param::Usize(height)]);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.block.header",
+            vec![Param::Usize(height)],
+        );
         let result = self.call(req)?;
 
         Ok(Vec::<u8>::from_hex(
@@ -418,7 +536,8 @@ impl<S: Read + Write> Client<S> {
         start_height: usize,
         count: usize,
     ) -> Result<GetHeadersRes, Error> {
-        let req = Request::new(
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.block.headers",
             vec![Param::Usize(start_height), Param::Usize(count)],
         );
@@ -438,7 +557,11 @@ impl<S: Read + Write> Client<S> {
 
     /// Estimates the fee required in **Satoshis per kilobyte** to confirm a transaction in `number` blocks.
     pub fn estimate_fee(&mut self, number: usize) -> Result<f64, Error> {
-        let req = Request::new("blockchain.estimatefee", vec![Param::Usize(number)]);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.estimatefee",
+            vec![Param::Usize(number)],
+        );
         let result = self.call(req)?;
 
         result
@@ -448,7 +571,11 @@ impl<S: Read + Write> Client<S> {
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
     pub fn relay_fee(&mut self) -> Result<f64, Error> {
-        let req = Request::new("blockchain.relayfee", vec![]);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.relayfee",
+            vec![],
+        );
         let result = self.call(req)?;
 
         result
@@ -473,7 +600,8 @@ impl<S: Read + Write> Client<S> {
         self.script_notifications
             .insert(script_hash.clone(), VecDeque::new());
 
-        let req = Request::new(
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.scripthash.subscribe",
             vec![Param::String(script_hash.to_hex())],
         );
@@ -495,7 +623,8 @@ impl<S: Read + Write> Client<S> {
             return Err(Error::NotSubscribed(script_hash));
         }
 
-        let req = Request::new(
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.scripthash.unsubscribe",
             vec![Param::String(script_hash.to_hex())],
         );
@@ -522,7 +651,11 @@ impl<S: Read + Write> Client<S> {
     /// Returns the balance for a *scriptPubKey*
     pub fn script_get_balance(&mut self, script: &Script) -> Result<GetBalanceRes, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new("blockchain.scripthash.get_balance", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.scripthash.get_balance",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
@@ -543,7 +676,11 @@ impl<S: Read + Write> Client<S> {
     /// Returns the history for a *scriptPubKey*
     pub fn script_get_history(&mut self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new("blockchain.scripthash.get_history", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.scripthash.get_history",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
@@ -564,7 +701,11 @@ impl<S: Read + Write> Client<S> {
     /// Returns the list of unspent outputs for a *scriptPubKey*
     pub fn script_list_unspent(&mut self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new("blockchain.scripthash.listunspent", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.scripthash.listunspent",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
@@ -591,7 +732,11 @@ impl<S: Read + Write> Client<S> {
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     pub fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
-        let req = Request::new("blockchain.transaction.get", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.get",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(Vec::<u8>::from_hex(
@@ -670,7 +815,11 @@ impl<S: Read + Write> Client<S> {
     /// Broadcasts the raw bytes of a transaction to the network.
     pub fn transaction_broadcast_raw(&mut self, raw_tx: &[u8]) -> Result<Txid, Error> {
         let params = vec![Param::String(raw_tx.to_hex())];
-        let req = Request::new("blockchain.transaction.broadcast", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.broadcast",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
@@ -689,7 +838,11 @@ impl<S: Read + Write> Client<S> {
         height: usize,
     ) -> Result<GetMerkleRes, Error> {
         let params = vec![Param::String(txid.to_hex()), Param::Usize(height)];
-        let req = Request::new("blockchain.transaction.get_merkle", params);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.get_merkle",
+            params,
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
@@ -697,7 +850,11 @@ impl<S: Read + Write> Client<S> {
 
     /// Returns the capabilities of the server.
     pub fn server_features(&mut self) -> Result<ServerFeaturesRes, Error> {
-        let req = Request::new("server.features", vec![]);
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "server.features",
+            vec![],
+        );
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)

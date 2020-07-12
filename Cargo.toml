@@ -21,6 +21,7 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "^0.4"
+env_logger = "0.7"
 bitcoin = { version = "0.23", features = ["use-serde"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
