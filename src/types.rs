@@ -2,6 +2,8 @@
 //!
 //! This module contains definitions of all the complex data structures that are returned by calls
 
+use std::ops::Deref;
+
 use bitcoin::blockdata::block;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::{sha256, Hash};
@@ -23,6 +25,8 @@ pub enum Param {
     String(String),
     /// Boolean parameter
     Bool(bool),
+    /// Bytes array parameter
+    Bytes(Vec<u8>),
 }
 
 #[derive(Serialize, Clone)]
@@ -40,7 +44,7 @@ pub struct Request<'a> {
 
 impl<'a> Request<'a> {
     /// Creates a new request with a default id
-    pub fn new(method: &'a str, params: Vec<Param>) -> Self {
+    fn new(method: &'a str, params: Vec<Param>) -> Self {
         Self {
             id: 0,
             jsonrpc: JSONRPC_2_0,
@@ -58,12 +62,31 @@ impl<'a> Request<'a> {
     }
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+pub struct Hex32Bytes(#[serde(deserialize_with = "from_hex")] [u8; 32]);
+
+impl Deref for Hex32Bytes {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for Hex32Bytes {
+    fn from(other: [u8; 32]) -> Hex32Bytes {
+        Hex32Bytes(other)
+    }
+}
+
 /// Format used by the Electrum server to identify an address. The reverse sha256 hash of the
 /// scriptPubKey. Documented [here](https://electrumx.readthedocs.io/en/latest/protocol-basics.html#script-hashes).
-pub type ScriptHash = [u8; 32];
+pub type ScriptHash = Hex32Bytes;
+
 /// Binary blob that condenses all the activity of an address. Used to detect changes without
 /// having to compare potentially long lists of transactions.
-pub type ScriptStatus = [u8; 32];
+pub type ScriptStatus = Hex32Bytes;
 
 /// Trait used to convert a struct into the Electrum representation of an address
 pub trait ToElectrumScriptHash {
@@ -76,7 +99,7 @@ impl ToElectrumScriptHash for Script {
         let mut result = sha256::Hash::hash(self.as_bytes()).into_inner();
         result.reverse();
 
-        result
+        result.into()
     }
 }
 
@@ -242,6 +265,10 @@ pub enum Error {
     InvalidDNSNameError(String),
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
+
+    /// Couldn't take a lock on the reader mutex. This means that there's already another reader
+    /// thread running
+    CouldntLockReader,
 
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
