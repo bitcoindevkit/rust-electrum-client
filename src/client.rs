@@ -3,7 +3,7 @@
 //! This module contains definitions of all the complex data structures that are returned by calls
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -96,10 +96,10 @@ where
     buf_reader: Mutex<BufReader<ClonableStream<S>>>,
 
     last_id: AtomicUsize,
-    waiting_map: Mutex<BTreeMap<usize, Sender<ChannelMessage>>>,
+    waiting_map: Mutex<HashMap<usize, Sender<ChannelMessage>>>,
 
     headers: Mutex<VecDeque<HeaderNotification>>,
-    script_notifications: Mutex<BTreeMap<ScriptHash, VecDeque<ScriptStatus>>>,
+    script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
     #[cfg(feature = "debug-calls")]
     calls: usize,
@@ -117,10 +117,10 @@ where
             stream: Mutex::new(stream),
 
             last_id: AtomicUsize::new(0),
-            waiting_map: Mutex::new(BTreeMap::new()),
+            waiting_map: Mutex::new(HashMap::new()),
 
             headers: Mutex::new(VecDeque::new()),
-            script_notifications: Mutex::new(BTreeMap::new()),
+            script_notifications: Mutex::new(HashMap::new()),
 
             #[cfg(feature = "debug-calls")]
             calls: 0,
@@ -330,11 +330,10 @@ impl<S: Read + Write> Client<S> {
                             trace!("Reader thread received response for {}", resp_id);
 
                             let mut map = self.waiting_map.lock().unwrap();
-                            if map.get(&resp_id).is_some() {
-                                map.get(&resp_id)
-                                    .unwrap()
+                            if let Some(sender) = map.get(&resp_id) {
+                                sender
                                     .send(ChannelMessage::Response(resp))
-                                    .unwrap(); // TODO: unwrap
+                                    .expect("Unable to send the response");
                                 map.remove(&resp_id);
                             } else {
                                 warn!("Missing listener for {}", resp_id);
@@ -344,11 +343,10 @@ impl<S: Read + Write> Client<S> {
                             // No id, that's probably a notification.
                             let mut resp = resp;
 
-                            match resp["method"].take().as_str() {
-                                Some(ref method) => {
-                                    self.handle_notification(method, resp["params"].take())?
-                                }
-                                _ => continue,
+                            if let Some(ref method) = resp["method"].take().as_str() {
+                                self.handle_notification(method, resp["params"].take())?;
+                            } else {
+                                warn!("Unexpected response: {:?}", resp);
                             }
                         }
                     }
@@ -399,7 +397,7 @@ impl<S: Read + Write> Client<S> {
     pub fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
 
-        let mut missing_responses = BTreeSet::new();
+        let mut missing_responses = HashSet::new();
         let mut answer = Vec::new();
 
         // Add our listener to the map before we send the request, Here we will clone the sender
@@ -595,7 +593,7 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Returns [`Error::AlreadySubscribed`](../types/enum.Error.html#variant.AlreadySubscribed) if
     /// already subscribed to the same script.
-    pub fn script_subscribe(&self, script: &Script) -> Result<ScriptStatus, Error> {
+    pub fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         let script_hash = script.to_electrum_scripthash();
         let mut script_notifications = self.script_notifications.lock().unwrap();
 
@@ -643,7 +641,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Tries to pop one queued notification for a the requested script. Returns `None` if there are no items in the queue.
-    pub fn script_pop(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
+    pub fn script_pop(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         let script_hash = script.to_electrum_scripthash();
 
         match self
