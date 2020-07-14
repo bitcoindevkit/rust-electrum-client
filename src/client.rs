@@ -283,6 +283,24 @@ impl<S: Read + Write> Client<S> {
                     until_message
                 );
 
+                if let Some(until_message) = until_message {
+                    // If we are trying to start a reader thread but the corresponding sender is
+                    // missing from the map, exit immediately. This can happen with batch calls,
+                    // since the sender is shared for all the individual queries in a call. We
+                    // might have already received a response for that id, but we don't know it
+                    // yet. Exiting here forces the calling code to fallback to the sender-receiver
+                    // method, and it should find a message there waiting for it.
+                    if self
+                        .waiting_map
+                        .lock()
+                        .unwrap()
+                        .get(&until_message)
+                        .is_none()
+                    {
+                        return Err(Error::CouldntLockReader);
+                    }
+                }
+
                 // Loop over every message
                 loop {
                     raw_resp.clear();
@@ -299,9 +317,7 @@ impl<S: Read + Write> Client<S> {
                         .and_then(|s| s.parse().ok())
                         .or(resp["id"].as_u64().map(|i| i as usize));
                     match resp_id {
-                        Some(resp_id)
-                            if until_message.is_some() && resp_id == until_message.unwrap() =>
-                        {
+                        Some(resp_id) if until_message == Some(resp_id) => {
                             // We have a valid id and it's exactly the one we were waiting for!
                             trace!(
                                 "Reader thread {} received a response for its request",
@@ -314,12 +330,10 @@ impl<S: Read + Write> Client<S> {
 
                             // If the map is not empty, we select a random thread to become the
                             // new reader thread.
-                            if !map.is_empty() {
-                                map.values()
-                                    .nth(0)
-                                    .unwrap()
+                            if let Some(sender) = map.values().nth(0) {
+                                sender
                                     .send(ChannelMessage::WakeUp)
-                                    .unwrap(); // TODO: unwrap
+                                    .expect("Unable to WakeUp a different thread");
                             }
 
                             break Ok(resp);
@@ -455,8 +469,6 @@ impl<S: Read + Write> Client<S> {
             match self._reader_thread(Some(req_id)) {
                 Ok(response) => break Ok(response),
                 Err(Error::CouldntLockReader) => {
-                    trace!("CouldntLockReader for {}", req_id);
-
                     match receiver.recv() {
                         // Received our response, returning it
                         Ok(ChannelMessage::Response(received)) => break Ok(received),
