@@ -341,7 +341,15 @@ impl<S: Read + Write> Client<S> {
                             }
                         }
                         None => {
-                            // No id, that's probably a notification. TODO
+                            // No id, that's probably a notification.
+                            let mut resp = resp;
+
+                            match resp["method"].take().as_str() {
+                                Some(ref method) => {
+                                    self.handle_notification(method, resp["params"].take())?
+                                }
+                                _ => continue,
+                            }
                         }
                     }
                 }
@@ -471,11 +479,11 @@ impl<S: Read + Write> Client<S> {
 
     fn handle_notification(&self, method: &str, result: serde_json::Value) -> Result<(), Error> {
         match method {
-            "blockchain.headers.subscribe" => self
-                .headers
-                .lock()
-                .unwrap()
-                .push_back(serde_json::from_value(result)?),
+            "blockchain.headers.subscribe" => self.headers.lock().unwrap().append(
+                &mut serde_json::from_value::<Vec<HeaderNotification>>(result)?
+                    .into_iter()
+                    .collect(),
+            ),
             "blockchain.scripthash.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
                 let mut script_notifications = self.script_notifications.lock().unwrap();
@@ -488,25 +496,6 @@ impl<S: Read + Write> Client<S> {
             }
             _ => info!("received unknown notification for method `{}`", method),
         }
-
-        Ok(())
-    }
-
-    /// Tries to read from the read buffer if any notifications were received since the last call
-    /// or `poll`, and processes them
-    pub fn poll(&self) -> Result<(), Error> {
-        // try to pull data from the stream
-        // self.buf_reader.fill_buf()?;
-
-        /* while !self.buf_reader.buffer().is_empty() {
-            let raw = self.recv()?;
-            let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
-
-            match resp["method"].take().as_str() {
-                Some(ref method) => self.handle_notification(method, resp["params"].take())?,
-                _ => continue,
-            }
-        } */
 
         Ok(())
     }
@@ -525,9 +514,7 @@ impl<S: Read + Write> Client<S> {
 
     /// Tries to pop one queued notification for a new block header that we might have received.
     /// Returns `None` if there are no items in the queue.
-    pub fn block_headers_poll(&self) -> Result<Option<HeaderNotification>, Error> {
-        self.poll()?;
-
+    pub fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error> {
         Ok(self.headers.lock().unwrap().pop_front())
     }
 
@@ -656,9 +643,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Tries to pop one queued notification for a the requested script. Returns `None` if there are no items in the queue.
-    pub fn script_poll(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
-        self.poll()?;
-
+    pub fn script_pop(&mut self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         let script_hash = script.to_electrum_scripthash();
 
         match self
