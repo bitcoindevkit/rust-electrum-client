@@ -3,13 +3,12 @@
 //! This module contains definitions of all the complex data structures that are returned by calls
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::{BTreeMap, VecDeque};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
-use std::sync::{Mutex, RwLock, TryLockError};
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Mutex, TryLockError};
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -97,10 +96,10 @@ where
     buf_reader: Mutex<BufReader<ClonableStream<S>>>,
 
     last_id: AtomicUsize,
-    waiting_map: RwLock<BTreeMap<usize, Sender<serde_json::Value>>>,
+    waiting_map: Mutex<BTreeMap<usize, Sender<ChannelMessage>>>,
 
-    headers: VecDeque<HeaderNotification>,
-    script_notifications: BTreeMap<ScriptHash, VecDeque<ScriptStatus>>,
+    headers: Mutex<VecDeque<HeaderNotification>>,
+    script_notifications: Mutex<BTreeMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
     #[cfg(feature = "debug-calls")]
     calls: usize,
@@ -118,10 +117,10 @@ where
             stream: Mutex::new(stream),
 
             last_id: AtomicUsize::new(0),
-            waiting_map: RwLock::new(BTreeMap::new()),
+            waiting_map: Mutex::new(BTreeMap::new()),
 
-            headers: VecDeque::new(),
-            script_notifications: BTreeMap::new(),
+            headers: Mutex::new(VecDeque::new()),
+            script_notifications: Mutex::new(BTreeMap::new()),
 
             #[cfg(feature = "debug-calls")]
             calls: 0,
@@ -257,15 +256,122 @@ impl Client<ElectrumProxyStream> {
     }
 }
 
-impl<S: Read + Write> Client<S> {
-    fn call(&mut self, req: Request) -> Result<serde_json::Value, Error> {
-        let mut raw = serde_json::to_vec(&req)?;
-        trace!("==> {}", String::from_utf8_lossy(&raw));
+#[derive(Debug)]
+enum ChannelMessage {
+    Response(serde_json::Value),
+    WakeUp,
+}
 
+impl<S: Read + Write> Client<S> {
+    // TODO: to enable this we have to find a way to allow concurrent read and writes to the
+    // underlying transport struct. This can be done pretty easily for TcpStream because it can be
+    // split into a "read" and a "write" object, but it's not as trivial for other types. Without
+    // such thing, this causes a deadlock, because the reader thread takes a lock on the
+    // `ClonableStream` before other threads can send a request to the server. They will block
+    // waiting for the reader to release the mutex, but this will never happen because the server
+    // didn't receive any request, so it has nothing to send back.
+    // pub fn reader_thread(&self) -> Result<(), Error> {
+    //     self._reader_thread(None).map(|_| ())
+    // }
+
+    fn _reader_thread(&self, until_message: Option<usize>) -> Result<serde_json::Value, Error> {
+        let mut raw_resp = String::new();
+        let resp = match self.buf_reader.try_lock() {
+            Ok(mut reader) => {
+                trace!(
+                    "Starting reader thread with `until_message` = {:?}",
+                    until_message
+                );
+
+                // Loop over every message
+                loop {
+                    raw_resp.clear();
+
+                    reader.read_line(&mut raw_resp)?;
+                    trace!("<== {}", raw_resp);
+
+                    let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
+
+                    // Normally there is and id, but it's missing for spontaneous notifications
+                    // from the server
+                    let resp_id = resp["id"]
+                        .as_str()
+                        .and_then(|s| s.parse().ok())
+                        .or(resp["id"].as_u64().map(|i| i as usize));
+                    match resp_id {
+                        Some(resp_id)
+                            if until_message.is_some() && resp_id == until_message.unwrap() =>
+                        {
+                            // We have a valid id and it's exactly the one we were waiting for!
+                            trace!(
+                                "Reader thread {} received a response for its request",
+                                resp_id
+                            );
+
+                            // Remove ourselves from the "waiting map"
+                            let mut map = self.waiting_map.lock().unwrap();
+                            map.remove(&resp_id);
+
+                            // If the map is not empty, we select a random thread to become the
+                            // new reader thread.
+                            if !map.is_empty() {
+                                map.values()
+                                    .nth(0)
+                                    .unwrap()
+                                    .send(ChannelMessage::WakeUp)
+                                    .unwrap(); // TODO: unwrap
+                            }
+
+                            break Ok(resp);
+                        }
+                        Some(resp_id) => {
+                            // We have an id, but it's not our response. Notify the thread and
+                            // move on
+                            trace!("Reader thread received response for {}", resp_id);
+
+                            let mut map = self.waiting_map.lock().unwrap();
+                            if map.get(&resp_id).is_some() {
+                                map.get(&resp_id)
+                                    .unwrap()
+                                    .send(ChannelMessage::Response(resp))
+                                    .unwrap(); // TODO: unwrap
+                                map.remove(&resp_id);
+                            } else {
+                                warn!("Missing listener for {}", resp_id);
+                            }
+                        }
+                        None => {
+                            // No id, that's probably a notification. TODO
+                        }
+                    }
+                }
+            }
+            Err(TryLockError::WouldBlock) => {
+                // If we "WouldBlock" here it means that there's already a reader thread
+                // running somewhere.
+                Err(Error::CouldntLockReader)
+            }
+            e @ Err(TryLockError::Poisoned(_)) => e
+                .map(|_| Ok(serde_json::Value::Null))
+                .expect("Poisoned reader mutex"), // panic if the reader mutex has been poisoned
+        };
+
+        let resp = resp?;
+        if let Some(err) = resp.get("error") {
+            Err(Error::Protocol(err.clone()))
+        } else {
+            Ok(resp)
+        }
+    }
+
+    fn call(&self, req: Request) -> Result<serde_json::Value, Error> {
         // Add our listener to the map before we send the request, to make sure we don't get a
         // reply before the receiver is added
-        let (sender, mut receiver) = channel();
-        self.waiting_map.write().unwrap().insert(req.id, sender);
+        let (sender, receiver) = channel();
+        self.waiting_map.lock().unwrap().insert(req.id, sender);
+
+        let mut raw = serde_json::to_vec(&req)?;
+        trace!("==> {}", String::from_utf8_lossy(&raw));
 
         raw.extend_from_slice(b"\n");
         let mut stream = self.stream.lock().unwrap();
@@ -275,190 +381,106 @@ impl<S: Read + Write> Client<S> {
 
         self.increment_calls();
 
-        let mut raw_resp = String::new();
-        let mut resp = 'outer: loop {
-            // Try to take the lock on the reader. If we manage to do so, we'll become the reader
-            // thread until we get our reponse
-            match self.buf_reader.try_lock() {
-                Ok(mut reader) => {
-                    trace!("Thread for message {} became the reader thread", req.id);
-
-                    // Start a loop to wait for our message
-                    loop {
-                        raw_resp.clear();
-
-                        reader.read_line(&mut raw_resp)?;
-                        trace!("<== {}", raw_resp);
-
-                        let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
-
-                        /*match resp["method"].take().as_str() {
-                            Some(ref method) if method == &req.method => break 'outer resp,
-                            Some(ref method) => self.handle_notification(method, resp["result"].take())?,
-                            _ => break resp,
-                        };*/
-
-                        // Normally there is and id, but it's missing for spontaneous notifications
-                        // from the server
-                        let resp_id = resp["id"]
-                            .as_str()
-                            .and_then(|s| s.parse().ok())
-                            .or(resp["id"].as_u64().map(|i| i as usize));
-                        match resp_id {
-                            Some(resp_id) if resp_id == req.id => {
-                                // We have a valid id and it's exactly the one we were waiting for!
-                                trace!(
-                                    "Reader thread {} received a response for its request",
-                                    req.id
-                                );
-
-                                // Remove ourselves from the "waiting map"
-                                let mut map = self.waiting_map.write().unwrap();
-                                map.remove(&req.id);
-
-                                // If the map is not empty, we select a random thread to become the
-                                // new reader thread. We close its channel to "wake it up"
-                                if !map.is_empty() {
-                                    let key = *map.keys().nth(0).unwrap();
-
-                                    trace!(
-                                        "There are still some other threads waiting, waking up {}",
-                                        key
-                                    );
-                                    map.remove(&key);
-                                }
-
-                                break 'outer resp;
-                            }
-                            Some(resp_id) => {
-                                // We have an id, but it's not our response. Notify the thread and
-                                // move on
-                                trace!(
-                                    "Reader thread {}, received response for {}",
-                                    req.id,
-                                    resp_id
-                                );
-
-                                let mut map = self.waiting_map.write().unwrap();
-                                if map.get(&resp_id).is_some() {
-                                    map.get(&resp_id).unwrap().send(resp).unwrap(); // TODO: unwrap
-                                    map.remove(&resp_id);
-                                } else {
-                                    warn!("Missing listener for {}", resp_id);
-                                }
-                            }
-                            None => {
-                                // No id, that's probably a notification
-                            }
-                        }
-                    }
-                }
-                Err(TryLockError::WouldBlock) => {
-                    // If we "WouldBlock" here it means that there's already a reader thread
-                    // running somewhere. So we wait for a message on our end of the channel.
-                    match receiver.recv() {
-                        // Received our response, returning it
-                        Ok(received) => break 'outer received,
-                        Err(_) => {
-                            // We were disconnected without a message, it means that the reader
-                            // thread is done and we were selected to become the next reader
-                            // thread. So we add ourselves back into the map and do another
-                            // iteration to take the reader lock
-                            trace!("Channel disconnected for {}", req.id);
-
-                            let (sender, _receiver) = channel();
-                            self.waiting_map.write().unwrap().insert(req.id, sender);
-
-                            receiver = _receiver;
-                        }
-                    }
-                }
-                e @ Err(TryLockError::Poisoned(_)) => e.map(|_| ()).expect("Poisoned reader mutex"), // panic if the reader mutex has been poisoned
-            }
-        };
-
-        if let Some(err) = resp.get("error") {
-            return Err(Error::Protocol(err.clone()));
-        }
-
+        let mut resp = self.recv(&receiver, req.id)?;
         Ok(resp["result"].take())
     }
 
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.
-    pub fn batch_call(&mut self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
-        let mut id_map = BTreeMap::new();
+    pub fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
+
+        let mut missing_responses = BTreeSet::new();
         let mut answer = Vec::new();
 
-        for (i, (method, params)) in batch.into_iter().enumerate() {
+        // Add our listener to the map before we send the request, Here we will clone the sender
+        // for every request id, so that we only have to monitor one receiver.
+        let (sender, receiver) = channel();
+
+        for (method, params) in batch.into_iter() {
             let req = Request::new_id(self.last_id.fetch_add(1, Ordering::SeqCst), &method, params);
+            missing_responses.insert(req.id);
+
+            self.waiting_map
+                .lock()
+                .unwrap()
+                .insert(req.id, sender.clone());
 
             raw.append(&mut serde_json::to_vec(&req)?);
             raw.extend_from_slice(b"\n");
+        }
 
-            id_map.insert(req.id, method);
+        if missing_responses.is_empty() {
+            return Ok(vec![]);
         }
 
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
-        /* self.stream.write_all(&raw)?;
-        self.stream.flush()?; */
+        let mut stream = self.stream.lock().unwrap();
+        stream.write_all(&raw)?;
+        stream.flush()?;
+        drop(stream); // release the lock
 
         self.increment_calls();
 
-        while answer.len() < id_map.len() {
-            let raw = self.recv()?;
-            let mut resp: serde_json::Value = serde_json::from_slice(&raw)?;
+        while !missing_responses.is_empty() {
+            let resp = self.recv(&receiver, *missing_responses.iter().nth(0).unwrap())?;
+            let resp_id = resp["id"].as_u64().unwrap() as usize;
 
-            let resp = match resp["id"].as_u64() {
-                Some(id) if id_map.contains_key(&(id as usize)) => resp,
-                _ => {
-                    self.handle_notification(
-                        resp["method"].take().as_str().unwrap_or(""),
-                        resp["result"].take(),
-                    )?;
-                    continue;
-                }
-            };
-
-            if let Some(err) = resp.get("error") {
-                return Err(Error::Protocol(err.clone()));
-            }
-
-            answer.push(resp.clone());
+            missing_responses.remove(&resp_id);
+            answer.push(resp);
         }
 
         answer.sort_by(|a, b| a["id"].as_u64().partial_cmp(&b["id"].as_u64()).unwrap());
-
         let answer = answer.into_iter().map(|mut x| x["result"].take()).collect();
+
         Ok(answer)
     }
 
-    fn recv(&mut self) -> io::Result<Vec<u8>> {
-        let mut resp = String::new();
-        // self.buf_reader.read_line(&mut resp)?;
+    fn recv(
+        &self,
+        receiver: &Receiver<ChannelMessage>,
+        req_id: usize,
+    ) -> Result<serde_json::Value, Error> {
+        loop {
+            // Try to take the lock on the reader. If we manage to do so, we'll become the reader
+            // thread until we get our reponse
+            match self._reader_thread(Some(req_id)) {
+                Ok(response) => break Ok(response),
+                Err(Error::CouldntLockReader) => {
+                    trace!("CouldntLockReader for {}", req_id);
 
-        trace!("<== {}", resp);
+                    match receiver.recv() {
+                        // Received our response, returning it
+                        Ok(ChannelMessage::Response(received)) => break Ok(received),
+                        Ok(ChannelMessage::WakeUp) => {
+                            // We have been woken up, this means that we should try becoming the
+                            // reader thread ourselves
+                            trace!("WakeUp for {}", req_id);
 
-        Ok(resp.as_bytes().to_vec())
+                            continue;
+                        }
+                        e @ Err(_) => e.map(|_| ()).expect("Error receiving from channel"), // panic if there's something wrong with the channels
+                    }
+                }
+                e @ Err(_) => break e,
+            }
+        }
     }
 
-    fn handle_notification(
-        &mut self,
-        method: &str,
-        result: serde_json::Value,
-    ) -> Result<(), Error> {
+    fn handle_notification(&self, method: &str, result: serde_json::Value) -> Result<(), Error> {
         match method {
-            "blockchain.headers.subscribe" => {
-                self.headers.push_back(serde_json::from_value(result)?)
-            }
+            "blockchain.headers.subscribe" => self
+                .headers
+                .lock()
+                .unwrap()
+                .push_back(serde_json::from_value(result)?),
             "blockchain.scripthash.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
+                let mut script_notifications = self.script_notifications.lock().unwrap();
 
-                let queue = self
-                    .script_notifications
+                let queue = script_notifications
                     .get_mut(&unserialized.scripthash)
                     .ok_or_else(|| Error::NotSubscribed(unserialized.scripthash))?;
 
@@ -472,7 +494,7 @@ impl<S: Read + Write> Client<S> {
 
     /// Tries to read from the read buffer if any notifications were received since the last call
     /// or `poll`, and processes them
-    pub fn poll(&mut self) -> Result<(), Error> {
+    pub fn poll(&self) -> Result<(), Error> {
         // try to pull data from the stream
         // self.buf_reader.fill_buf()?;
 
@@ -490,7 +512,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
-    pub fn block_headers_subscribe(&mut self) -> Result<HeaderNotification, Error> {
+    pub fn block_headers_subscribe(&self) -> Result<HeaderNotification, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.headers.subscribe",
@@ -503,19 +525,19 @@ impl<S: Read + Write> Client<S> {
 
     /// Tries to pop one queued notification for a new block header that we might have received.
     /// Returns `None` if there are no items in the queue.
-    pub fn block_headers_poll(&mut self) -> Result<Option<HeaderNotification>, Error> {
+    pub fn block_headers_poll(&self) -> Result<Option<HeaderNotification>, Error> {
         self.poll()?;
 
-        Ok(self.headers.pop_front())
+        Ok(self.headers.lock().unwrap().pop_front())
     }
 
     /// Gets the block header for height `height`.
-    pub fn block_header(&mut self, height: usize) -> Result<BlockHeader, Error> {
+    pub fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
         Ok(deserialize(&self.block_header_raw(height)?)?)
     }
 
     /// Gets the raw bytes of block header for height `height`.
-    pub fn block_header_raw(&mut self, height: usize) -> Result<Vec<u8>, Error> {
+    pub fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.block.header",
@@ -531,11 +553,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Tries to fetch `count` block headers starting from `start_height`.
-    pub fn block_headers(
-        &mut self,
-        start_height: usize,
-        count: usize,
-    ) -> Result<GetHeadersRes, Error> {
+    pub fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.block.headers",
@@ -556,7 +574,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Estimates the fee required in **Satoshis per kilobyte** to confirm a transaction in `number` blocks.
-    pub fn estimate_fee(&mut self, number: usize) -> Result<f64, Error> {
+    pub fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.estimatefee",
@@ -570,7 +588,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
-    pub fn relay_fee(&mut self) -> Result<f64, Error> {
+    pub fn relay_fee(&self) -> Result<f64, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.relayfee",
@@ -590,15 +608,15 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Returns [`Error::AlreadySubscribed`](../types/enum.Error.html#variant.AlreadySubscribed) if
     /// already subscribed to the same script.
-    pub fn script_subscribe(&mut self, script: &Script) -> Result<ScriptStatus, Error> {
+    pub fn script_subscribe(&self, script: &Script) -> Result<ScriptStatus, Error> {
         let script_hash = script.to_electrum_scripthash();
+        let mut script_notifications = self.script_notifications.lock().unwrap();
 
-        if self.script_notifications.contains_key(&script_hash) {
+        if script_notifications.contains_key(&script_hash) {
             return Err(Error::AlreadySubscribed(script_hash));
         }
 
-        self.script_notifications
-            .insert(script_hash.clone(), VecDeque::new());
+        script_notifications.insert(script_hash.clone(), VecDeque::new());
 
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -616,10 +634,11 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Returns [`Error::NotSubscribed`](../types/enum.Error.html#variant.NotSubscribed) if
     /// not subscribed to the script.
-    pub fn script_unsubscribe(&mut self, script: &Script) -> Result<bool, Error> {
+    pub fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
+        let mut script_notifications = self.script_notifications.lock().unwrap();
 
-        if !self.script_notifications.contains_key(&script_hash) {
+        if !script_notifications.contains_key(&script_hash) {
             return Err(Error::NotSubscribed(script_hash));
         }
 
@@ -631,7 +650,7 @@ impl<S: Read + Write> Client<S> {
         let value = self.call(req)?;
         let answer = serde_json::from_value(value)?;
 
-        self.script_notifications.remove(&script_hash);
+        script_notifications.remove(&script_hash);
 
         Ok(answer)
     }
@@ -642,14 +661,19 @@ impl<S: Read + Write> Client<S> {
 
         let script_hash = script.to_electrum_scripthash();
 
-        match self.script_notifications.get_mut(&script_hash) {
+        match self
+            .script_notifications
+            .lock()
+            .unwrap()
+            .get_mut(&script_hash)
+        {
             None => Err(Error::NotSubscribed(script_hash)),
             Some(queue) => Ok(queue.pop_front()),
         }
     }
 
     /// Returns the balance for a *scriptPubKey*
-    pub fn script_get_balance(&mut self, script: &Script) -> Result<GetBalanceRes, Error> {
+    pub fn script_get_balance(&self, script: &Script) -> Result<GetBalanceRes, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -663,10 +687,7 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`script_get_balance`](#method.script_get_balance).
     ///
     /// Takes a list of scripts and returns a list of balance responses.
-    pub fn batch_script_get_balance<'s, I>(
-        &mut self,
-        scripts: I,
-    ) -> Result<Vec<GetBalanceRes>, Error>
+    pub fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
         I: IntoIterator<Item = &'s Script>,
     {
@@ -674,7 +695,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Returns the history for a *scriptPubKey*
-    pub fn script_get_history(&mut self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+    pub fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -689,7 +710,7 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Takes a list of scripts and returns a list of history responses.
     pub fn batch_script_get_history<'s, I>(
-        &mut self,
+        &self,
         scripts: I,
     ) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
@@ -699,7 +720,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Returns the list of unspent outputs for a *scriptPubKey*
-    pub fn script_list_unspent(&mut self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
+    pub fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -715,7 +736,7 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Takes a list of scripts and returns a list of a list of utxos.
     pub fn batch_script_list_unspent<'s, I>(
-        &mut self,
+        &self,
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
@@ -725,12 +746,12 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Gets the transaction with `txid`. Returns an error if not found.
-    pub fn transaction_get(&mut self, txid: &Txid) -> Result<Transaction, Error> {
+    pub fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
         Ok(deserialize(&self.transaction_get_raw(txid)?)?)
     }
 
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
-    pub fn transaction_get_raw(&mut self, txid: &Txid) -> Result<Vec<u8>, Error> {
+    pub fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -749,7 +770,7 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.
-    pub fn batch_transaction_get<'t, I>(&mut self, txids: I) -> Result<Vec<Transaction>, Error>
+    pub fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
     {
@@ -762,7 +783,7 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`transaction_get_raw`](#method.transaction_get_raw).
     ///
     /// Takes a list of `txids` and returns a list of transactions raw bytes.
-    pub fn batch_transaction_get_raw<'t, I>(&mut self, txids: I) -> Result<Vec<Vec<u8>>, Error>
+    pub fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
     {
@@ -776,7 +797,7 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`block_header_raw`](#method.block_header_raw).
     ///
     /// Takes a list of `heights` of blocks and returns a list of block header raw bytes.
-    pub fn batch_block_header_raw<'s, I>(&mut self, heights: I) -> Result<Vec<Vec<u8>>, Error>
+    pub fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = u32>,
     {
@@ -791,7 +812,7 @@ impl<S: Read + Write> Client<S> {
     /// Batch version of [`block_header`](#method.block_header).
     ///
     /// Takes a list of `heights` of blocks and returns a list of headers.
-    pub fn batch_block_header<'s, I>(&mut self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    pub fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
         I: IntoIterator<Item = u32>,
     {
@@ -805,7 +826,7 @@ impl<S: Read + Write> Client<S> {
     ///
     /// Takes a list of `numbers` of blocks and returns a list of fee required in
     /// **Satoshis per kilobyte** to confirm a transaction in the given number of blocks.
-    pub fn batch_estimate_fee<'s, I>(&mut self, numbers: I) -> Result<Vec<f64>, Error>
+    pub fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
         I: IntoIterator<Item = usize>,
     {
@@ -813,7 +834,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Broadcasts the raw bytes of a transaction to the network.
-    pub fn transaction_broadcast_raw(&mut self, raw_tx: &[u8]) -> Result<Txid, Error> {
+    pub fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
         let params = vec![Param::String(raw_tx.to_hex())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -826,14 +847,14 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Broadcasts a transaction to the network.
-    pub fn transaction_broadcast(&mut self, tx: &Transaction) -> Result<Txid, Error> {
+    pub fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
         let buffer: Vec<u8> = serialize(tx);
         self.transaction_broadcast_raw(&buffer)
     }
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     pub fn transaction_get_merkle(
-        &mut self,
+        &self,
         txid: &Txid,
         height: usize,
     ) -> Result<GetMerkleRes, Error> {
@@ -849,7 +870,7 @@ impl<S: Read + Write> Client<S> {
     }
 
     /// Returns the capabilities of the server.
-    pub fn server_features(&mut self) -> Result<ServerFeaturesRes, Error> {
+    pub fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "server.features",

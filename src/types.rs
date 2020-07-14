@@ -243,6 +243,10 @@ pub enum Error {
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
 
+    /// Couldn't take a lock on the reader mutex. This means that there's already another reader
+    /// thread running
+    CouldntLockReader,
+
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
     InvalidSslMethod(openssl::error::ErrorStack),
