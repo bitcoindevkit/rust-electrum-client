@@ -2,6 +2,9 @@ language: rust
 rust:
   - stable
 #  - 1.31.0 TODO: support the first 2018-edition toolchain
+env:
+    - TEST_ELECTRUM_SERVER=electrum.blockstream.info:50001
+    - TEST_ELECTRUM_SERVER=bitcoin.aranguren.org:50001
 before_script:
   - rustup component add rustfmt
 # Run tests and check a few combinations of features
