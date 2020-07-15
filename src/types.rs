@@ -265,6 +265,8 @@ pub enum Error {
     InvalidDNSNameError(String),
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
+    /// SSL over a socks5 proxy is currently not supported
+    SSLOverSocks5,
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
