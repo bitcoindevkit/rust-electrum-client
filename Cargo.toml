@@ -1,6 +1,6 @@
 [package]
 name = "electrum-client"
-version = "0.1.0-beta.6"
+version = "0.2.0-beta.1"
 authors = ["Alekos Filini <alekos.filini@gmail.com>"]
 license = "MIT"
 homepage = "https://github.com/MagicalBitcoin/rust-electrum-client"
@@ -18,7 +18,6 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "^0.4"
-env_logger = "0.7"
 bitcoin = { version = "0.23", features = ["use-serde"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }

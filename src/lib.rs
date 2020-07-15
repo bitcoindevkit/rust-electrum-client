@@ -12,9 +12,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use electrum_client::Client;
+//! use electrum_client::{Client, ElectrumApi};
 //!
-//! let mut client = Client::new("kirsche.emzy.de:50001")?;
+//! let mut client = Client::new("tcp://electrum.blockstream.info:50001", None)?;
 //! let response = client.server_features()?;
 //! # Ok::<(), electrum_client::Error>(())
 //! ```
@@ -38,11 +38,14 @@ extern crate webpki;
 #[cfg(any(feature = "use-rustls", feature = "default"))]
 extern crate webpki_roots;
 
-pub mod batch;
+mod api;
+mod batch;
 pub mod client;
+pub mod raw_client;
 mod stream;
-pub mod types;
+mod types;
 
+pub use api::ElectrumApi;
 pub use batch::Batch;
-pub use client::Client;
+pub use client::*;
 pub use types::*;

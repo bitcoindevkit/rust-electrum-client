@@ -2,9 +2,11 @@
 //!
 //! This module contains definitions of all the complex data structures that are returned by calls
 
+use std::convert::TryFrom;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block;
+use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{Script, Txid};
@@ -136,8 +138,6 @@ fn from_hex_header<'de, D>(deserializer: D) -> Result<block::BlockHeader, D::Err
 where
     D: de::Deserializer<'de>,
 {
-    use bitcoin::consensus::deserialize;
-
     let vec: Vec<u8> = from_hex(deserializer)?;
     deserialize(&vec).map_err(de::Error::custom)
 }
@@ -231,6 +231,27 @@ pub struct HeaderNotification {
     pub header: block::BlockHeader,
 }
 
+/// Notification of a new block header with the header encoded as raw bytes
+#[derive(Debug, Deserialize)]
+pub struct RawHeaderNotification {
+    /// New block height.
+    pub height: usize,
+    /// Newly added header.
+    #[serde(rename = "hex", deserialize_with = "from_hex")]
+    pub header: Vec<u8>,
+}
+
+impl TryFrom<RawHeaderNotification> for HeaderNotification {
+    type Error = Error;
+
+    fn try_from(raw: RawHeaderNotification) -> Result<Self, Self::Error> {
+        Ok(HeaderNotification {
+            height: raw.height,
+            header: deserialize(&raw.header)?,
+        })
+    }
+}
+
 /// Notification of the new status of a script
 #[derive(Debug, Deserialize)]
 pub struct ScriptNotification {
@@ -265,6 +286,8 @@ pub enum Error {
     InvalidDNSNameError(String),
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
+    /// SSL over a socks5 proxy is currently not supported
+    SSLOverSocks5,
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
