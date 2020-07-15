@@ -139,6 +139,10 @@ pub trait ElectrumApi {
     /// Returns the capabilities of the server.
     fn server_features(&self) -> Result<ServerFeaturesRes, Error>;
 
+    /// Pings the server. This method can also be used as a "dummy" call to trigger the processing
+    /// of incoming block header or script notifications.
+    fn ping(&self) -> Result<(), Error>;
+
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
     fn calls_made(&self) -> usize;

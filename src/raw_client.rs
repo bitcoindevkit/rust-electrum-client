@@ -827,6 +827,17 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn ping(&self) -> Result<(), Error> {
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "server.ping",
+            vec![],
+        );
+        self.call(req)?;
+
+        Ok(())
+    }
+
     #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
@@ -1019,5 +1030,11 @@ mod test {
                 126, 200, 65, 121, 158, 105, 111, 38, 151, 38, 147, 144, 224, 5, 218
             ]
         );
+    }
+
+    #[test]
+    fn test_ping() {
+        let client = RawClient::new(get_test_server()).unwrap();
+        client.ping().unwrap();
     }
 }

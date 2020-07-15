@@ -240,6 +240,11 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn ping(&self) -> Result<(), Error> {
+        impl_inner_call!(self, ping)
+    }
+
+    #[inline]
     #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> usize {
         impl_inner_call!(self, calls_made)
