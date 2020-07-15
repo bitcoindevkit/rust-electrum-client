@@ -2,11 +2,11 @@
 //!
 //! This module contains definitions of all the complex data structures that are returned by calls
 
-use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Mutex, TryLockError};
 
@@ -102,7 +102,7 @@ where
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
     #[cfg(feature = "debug-calls")]
-    calls: usize,
+    calls: AtomicUsize,
 }
 
 impl<S> From<S> for Client<S>
@@ -123,7 +123,7 @@ where
             script_notifications: Mutex::new(HashMap::new()),
 
             #[cfg(feature = "debug-calls")]
-            calls: 0,
+            calls: AtomicUsize::new(0),
         }
     }
 }
@@ -723,8 +723,14 @@ impl<S: Read + Write> Client<S> {
             params,
         );
         let result = self.call(req)?;
+        let mut result: Vec<ListUnspentRes> = serde_json::from_value(result)?;
 
-        Ok(serde_json::from_value(result)?)
+        // This should not be necessary, since the protocol documentation says that the txs should
+        // be "in blockchain order" (https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-listunspent).
+        // However, elects seems to be ignoring this at the moment, so we'll sort again here just
+        // to make sure the result is consistent.
+        result.sort_unstable_by_key(|k| (k.height, k.tx_pos));
+        Ok(result)
     }
 
     /// Batch version of [`script_list_unspent`](#method.script_list_unspent).
@@ -879,13 +885,13 @@ impl<S: Read + Write> Client<S> {
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
     pub fn calls_made(&self) -> usize {
-        self.calls
+        self.calls.load(Ordering::SeqCst)
     }
 
     #[inline]
     #[cfg(feature = "debug-calls")]
-    fn increment_calls(&mut self) {
-        self.calls += 1;
+    fn increment_calls(&self) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
     }
 
     #[inline]
@@ -895,127 +901,76 @@ impl<S: Read + Write> Client<S> {
 
 #[cfg(test)]
 mod test {
-    use std::fs::File;
-    use std::io::Read;
-    use test_stream::TestStream;
-
     use client::Client;
 
-    impl Client<TestStream> {
-        pub fn new_test(file: File) -> Self {
-            TestStream::new(file).into()
-        }
-    }
-
-    macro_rules! impl_test_prelude {
-        ( $testcase:expr ) => {{
-            let data_in = File::open(format!("./test_data/{}.in", $testcase)).unwrap();
-            Client::new_test(data_in)
-        }};
-    }
-
-    macro_rules! impl_test_conclusion {
-        ( $testcase:expr, $stream:expr ) => {
-            let mut data_out = File::open(format!("./test_data/{}.out", $testcase)).unwrap();
-            let mut buffer = Vec::new();
-            data_out.read_to_end(&mut buffer).unwrap();
-            let stream_buffer = $stream.stream().lock().unwrap().buffer.clone();
-
-            assert_eq!(
-                stream_buffer,
-                buffer,
-                "Expecting `{}`, got `{}`",
-                String::from_utf8_lossy(&buffer.to_vec()),
-                String::from_utf8_lossy(&stream_buffer)
-            );
-        };
+    fn get_test_server() -> String {
+        std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("electrum.blockstream.info:50001".into())
     }
 
     #[test]
     fn test_server_features_simple() {
-        let test_case = "server_features_simple";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client.server_features().unwrap();
-        assert_eq!(resp.server_version, "ElectrumX 1.0.17");
         assert_eq!(
             resp.genesis_hash,
             [
-                0x00, 0x00, 0x00, 0x00, 0x09, 0x33, 0xEA, 0x01, 0xAD, 0x0E, 0xE9, 0x84, 0x20, 0x97,
-                0x79, 0xBA, 0xAE, 0xC3, 0xCE, 0xD9, 0x0F, 0xA3, 0xF4, 0x08, 0x71, 0x95, 0x26, 0xF8,
-                0xD7, 0x7F, 0x49, 0x43
-            ]
+                0, 0, 0, 0, 0, 25, 214, 104, 156, 8, 90, 225, 101, 131, 30, 147, 79, 247, 99, 174,
+                70, 162, 166, 193, 114, 179, 241, 182, 10, 140, 226, 111
+            ],
         );
-        assert_eq!(resp.protocol_min, "1.0");
-        assert_eq!(resp.protocol_max, "1.0");
         assert_eq!(resp.hash_function, Some("sha256".into()));
         assert_eq!(resp.pruning, None);
-
-        impl_test_conclusion!(test_case, client.stream);
     }
     #[test]
     fn test_relay_fee() {
-        let test_case = "relay_fee";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client.relay_fee().unwrap();
-        assert_eq!(resp, 123.4);
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert_eq!(resp, 0.00001);
     }
 
     #[test]
     fn test_estimate_fee() {
-        let test_case = "estimate_fee";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client.estimate_fee(10).unwrap();
-        assert_eq!(resp, 10.0);
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert!(resp > 0.0);
     }
 
     #[test]
     fn test_block_header() {
-        let test_case = "block_header";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let resp = client.block_header(500).unwrap();
-        assert_eq!(resp.version, 536870912);
-        assert_eq!(resp.time, 1578166214);
-        assert_eq!(resp.nonce, 0);
-
-        impl_test_conclusion!(test_case, client.stream);
+        let resp = client.block_header(0).unwrap();
+        assert_eq!(resp.version, 0x01);
+        assert_eq!(resp.time, 1231006505);
+        assert_eq!(resp.nonce, 0x7c2bac1d);
     }
 
     #[test]
     fn test_block_headers() {
-        let test_case = "block_headers";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let resp = client.block_headers(100, 4).unwrap();
+        let resp = client.block_headers(0, 4).unwrap();
         assert_eq!(resp.count, 4);
         assert_eq!(resp.max, 2016);
         assert_eq!(resp.headers.len(), 4);
 
-        assert_eq!(resp.headers[0].time, 1563694949);
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert_eq!(resp.headers[0].time, 1231006505);
     }
 
     #[test]
     fn test_script_get_balance() {
         use std::str::FromStr;
 
-        let test_case = "script_get_balance";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
+        // Realistically nobody will ever spend from this address, so we can expect the balance to
+        // increase over time
+        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr").unwrap();
         let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
-        assert_eq!(resp.confirmed, 0);
-        assert_eq!(resp.unconfirmed, 130000000);
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert!(resp.confirmed >= 213091301265);
     }
 
     #[test]
@@ -1025,80 +980,67 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let test_case = "script_get_history";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
+        // Mt.Gox hack address
+        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
         let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
-        assert_eq!(resp.len(), 2);
+
+        assert!(resp.len() >= 328);
         assert_eq!(
             resp[0].tx_hash,
-            Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
+            Txid::from_hex("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
                 .unwrap()
         );
-
-        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
     fn test_script_list_unspent() {
-        use std::str::FromStr;
-
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
+        use std::str::FromStr;
 
-        let test_case = "script_list_unspent";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let addr = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi").unwrap();
+        // Mt.Gox hack address
+        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
         let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
-        assert_eq!(resp.len(), 2);
-        assert_eq!(resp[0].value, 30000000);
-        assert_eq!(resp[0].height, 0);
-        assert_eq!(resp[0].tx_pos, 1);
+
+        assert!(resp.len() >= 329);
+        assert_eq!(resp[0].value, 7995600000000);
+        assert_eq!(resp[0].height, 111194);
+        assert_eq!(resp[0].tx_pos, 0);
         assert_eq!(
             resp[0].tx_hash,
-            Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
+            Txid::from_hex("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
                 .unwrap()
         );
-
-        impl_test_conclusion!(test_case, client.stream);
     }
 
     #[test]
     fn test_batch_script_list_unspent() {
         use std::str::FromStr;
 
-        let test_case = "batch_script_list_unspent";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
-        let script_1 = bitcoin::Address::from_str("2N1xJCxBUXTDs6y8Sydz3axhAiXrrQwcosi")
-            .unwrap()
-            .script_pubkey();
-        let script_2 = bitcoin::Address::from_str("2MyEi7dbTfQxo1M4hJaAzA2tgEJFQhYv5Au")
+        // Mt.Gox hack address
+        let script_1 = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
             .unwrap()
             .script_pubkey();
 
-        let resp = client
-            .batch_script_list_unspent(vec![&script_1, &script_2])
-            .unwrap();
-        assert_eq!(resp.len(), 2);
-        assert_eq!(resp[0].len(), 2);
-        assert_eq!(resp[1].len(), 1);
-
-        impl_test_conclusion!(test_case, client.stream);
+        let resp = client.batch_script_list_unspent(vec![&script_1]).unwrap();
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0].len() >= 329);
     }
 
     #[test]
     fn test_batch_estimate_fee() {
-        let test_case = "batch_estimate_fee";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
-        assert_eq!(resp[0], 10.0);
-        assert_eq!(resp[1], 20.0);
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert_eq!(resp.len(), 2);
+        assert!(resp[0] > 0.0);
+        assert!(resp[1] > 0.0);
     }
 
     #[test]
@@ -1106,41 +1048,16 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let test_case = "transaction_get";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client
             .transaction_get(
-                &Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
+                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(resp.version, 2);
-        assert_eq!(resp.lock_time, 1376);
-
-        impl_test_conclusion!(test_case, client.stream);
-    }
-
-    #[test]
-    fn test_transaction_broadcast() {
-        use bitcoin::consensus::deserialize;
-        use bitcoin::hashes::hex::FromHex;
-        use bitcoin::Txid;
-
-        let test_case = "transaction_broadcast";
-        let mut client = impl_test_prelude!(test_case);
-
-        let buf = Vec::<u8>::from_hex("02000000000101f6cd5873d669cc2de550453623d9d10ed5b5ba906d81160ee3ab853ebcfffa0c0100000000feffffff02e22f82000000000017a914e229870f3af1b1a3aefc3452a4d2939b443e6eba8780c3c9010000000017a9145f859501ff79211aeb972633b782743dd3b31dab8702473044022046ff3b0618107e08bd25fb753e31542b8c23575d7e9faf43dd17f59727cfb9c902200a4f3837105808d810de01fcd63fb18e66a69026090dc72b66840d41e55c6bf3012103e531113bbca998f8d164235e3395db336d3ba03552d1bfaa83fd7cffe6e5c6c960050000").unwrap();
-        let tx: bitcoin::Transaction = deserialize(&buf).unwrap();
-
-        let resp = client.transaction_broadcast(&tx).unwrap();
-        assert_eq!(
-            resp,
-            Txid::from_hex("a1aa2b52fb79641f918d44a27f51781c3c0c49f7ee0e4b14dbb37c722853f046")
-                .unwrap()
-        );
-
-        impl_test_conclusion!(test_case, client.stream);
+        assert_eq!(resp.version, 1);
+        assert_eq!(resp.lock_time, 0);
     }
 
     #[test]
@@ -1148,28 +1065,24 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let test_case = "transaction_get_merkle";
-        let mut client = impl_test_prelude!(test_case);
+        let client = Client::new(get_test_server()).unwrap();
 
         let resp = client
             .transaction_get_merkle(
-                &Txid::from_hex("2d64851151550e8c4d337f335ee28874401d55b358a66f1bafab2c3e9f48773d")
+                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
                     .unwrap(),
-                1234,
+                630000,
             )
             .unwrap();
-        assert_eq!(resp.block_height, 450538);
-        assert_eq!(resp.pos, 710);
-        assert_eq!(resp.merkle.len(), 11);
+        assert_eq!(resp.block_height, 630000);
+        assert_eq!(resp.pos, 0);
+        assert_eq!(resp.merkle.len(), 12);
         assert_eq!(
             resp.merkle[0],
             [
-                0x71, 0x3D, 0x6C, 0x7E, 0x6C, 0xE7, 0xBB, 0xEA, 0x70, 0x8D, 0x61, 0x16, 0x22, 0x31,
-                0xEA, 0xA8, 0xEC, 0xB3, 0x1C, 0x4C, 0x5D, 0xD8, 0x4F, 0x81, 0xC2, 0x04, 0x09, 0xA9,
-                0x00, 0x69, 0xCB, 0x24
+                30, 10, 161, 245, 132, 125, 136, 198, 186, 138, 107, 216, 92, 22, 145, 81, 130,
+                126, 200, 65, 121, 158, 105, 111, 38, 151, 38, 147, 144, 224, 5, 218
             ]
         );
-
-        impl_test_conclusion!(test_case, client.stream);
     }
 }

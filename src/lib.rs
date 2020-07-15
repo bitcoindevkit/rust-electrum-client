@@ -41,8 +41,6 @@ extern crate webpki_roots;
 pub mod batch;
 pub mod client;
 mod stream;
-#[cfg(test)]
-mod test_stream;
 pub mod types;
 
 pub use batch::Batch;

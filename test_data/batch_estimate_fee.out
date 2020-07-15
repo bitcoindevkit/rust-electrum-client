@@ -1,2 +1,0 @@
-{"jsonrpc":"2.0","id":0,"method":"blockchain.estimatefee","params":[10]}
-{"jsonrpc":"2.0","id":1,"method":"blockchain.estimatefee","params":[20]}

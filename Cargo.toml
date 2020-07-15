@@ -9,9 +9,6 @@ documentation = "https://docs.rs/electrum-client/"
 description = "Bitcoin Electrum client library. Supports plaintext, TLS and Onion servers."
 keywords = ["bitcoin", "electrum"]
 readme = "README.md"
-exclude = [
-    "test_data/*",
-]
 
 # loosely based on https://github.com/evgeniy-scherbina/rust-electrumx-client
 
