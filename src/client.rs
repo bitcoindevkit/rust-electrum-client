@@ -82,46 +82,57 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, block_headers_subscribe)
     }
 
+    #[inline]
     fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error> {
         impl_inner_call!(self, block_headers_pop)
     }
 
+    #[inline]
     fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
         impl_inner_call!(self, block_header, height)
     }
 
+    #[inline]
     fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
         impl_inner_call!(self, block_header_raw, height)
     }
 
+    #[inline]
     fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error> {
         impl_inner_call!(self, block_headers, start_height, count)
     }
 
+    #[inline]
     fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
         impl_inner_call!(self, estimate_fee, number)
     }
 
+    #[inline]
     fn relay_fee(&self) -> Result<f64, Error> {
         impl_inner_call!(self, relay_fee)
     }
 
+    #[inline]
     fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         impl_inner_call!(self, script_subscribe, script)
     }
 
+    #[inline]
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         impl_inner_call!(self, script_unsubscribe, script)
     }
 
+    #[inline]
     fn script_pop(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         impl_inner_call!(self, script_pop, script)
     }
 
+    #[inline]
     fn script_get_balance(&self, script: &Script) -> Result<GetBalanceRes, Error> {
         impl_inner_call!(self, script_get_balance, script)
     }
 
+    #[inline]
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
         I: IntoIterator<Item = &'s Script>,
@@ -129,10 +140,12 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_script_get_balance, scripts)
     }
 
+    #[inline]
     fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
         impl_inner_call!(self, script_get_history, script)
     }
 
+    #[inline]
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
         I: IntoIterator<Item = &'s Script>,
@@ -140,10 +153,12 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_script_get_history, scripts)
     }
 
+    #[inline]
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         impl_inner_call!(self, script_list_unspent, script)
     }
 
+    #[inline]
     fn batch_script_list_unspent<'s, I>(
         &self,
         scripts: I,
@@ -154,14 +169,17 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_script_list_unspent, scripts)
     }
 
+    #[inline]
     fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
         impl_inner_call!(self, transaction_get, txid)
     }
 
+    #[inline]
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         impl_inner_call!(self, transaction_get_raw, txid)
     }
 
+    #[inline]
     fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
@@ -169,6 +187,7 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_transaction_get, txids)
     }
 
+    #[inline]
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = &'t Txid>,
@@ -176,6 +195,7 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_transaction_get_raw, txids)
     }
 
+    #[inline]
     fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
         I: IntoIterator<Item = u32>,
@@ -183,6 +203,7 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_block_header_raw, heights)
     }
 
+    #[inline]
     fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
         I: IntoIterator<Item = u32>,
@@ -190,6 +211,7 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_block_header, heights)
     }
 
+    #[inline]
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
         I: IntoIterator<Item = usize>,
@@ -197,22 +219,27 @@ impl ElectrumApi for Client {
         impl_inner_call!(self, batch_estimate_fee, numbers)
     }
 
+    #[inline]
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
         impl_inner_call!(self, transaction_broadcast_raw, raw_tx)
     }
 
+    #[inline]
     fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
         impl_inner_call!(self, transaction_broadcast, tx)
     }
 
+    #[inline]
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         impl_inner_call!(self, transaction_get_merkle, txid, height)
     }
 
+    #[inline]
     fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
         impl_inner_call!(self, server_features)
     }
 
+    #[inline]
     #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> usize {
         impl_inner_call!(self, calls_made)
