@@ -400,7 +400,15 @@ impl<S: Read + Write> RawClient<S> {
 
         self.increment_calls();
 
-        let mut resp = self.recv(&receiver, req.id)?;
+        let mut resp = match self.recv(&receiver, req.id) {
+            Ok(resp) => resp,
+            e @ Err(_) => {
+                // In case of error our sender could still be left in the map, depending on where
+                // the error happened. Just in case, try to remove it here
+                self.waiting_map.lock().unwrap().remove(&req.id);
+                return e;
+            }
+        };
         Ok(resp["result"].take())
     }
 
@@ -505,7 +513,21 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         self.increment_calls();
 
         while !missing_responses.is_empty() {
-            let resp = self.recv(&receiver, *missing_responses.iter().nth(0).unwrap())?;
+            let req_id = *missing_responses.iter().nth(0).unwrap();
+            let resp = match self.recv(&receiver, req_id) {
+                Ok(resp) => resp,
+                Err(e) => {
+                    // In case of error our sender could still be left in the map, depending on where
+                    // the error happened. Just in case, try to remove it here
+                    warn!("got error for req_id {}: {:?}", req_id, e);
+                    warn!("removing all waiting req of this batch");
+                    let mut guard = self.waiting_map.lock().unwrap();
+                    for req_id in missing_responses.iter() {
+                        guard.remove(&req_id);
+                    }
+                    return Err(e);
+                }
+            };
             let resp_id = resp["id"].as_u64().unwrap() as usize;
 
             missing_responses.remove(&resp_id);
