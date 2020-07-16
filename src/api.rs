@@ -1,3 +1,8 @@
+//! Electrum APIs
+
+use std::convert::TryInto;
+
+use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
 use batch::Batch;
@@ -5,20 +10,73 @@ use types::*;
 
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {
+    /// Gets the block header for height `height`.
+    fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
+        Ok(deserialize(&self.block_header_raw(height)?)?)
+    }
+
+    /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
+    fn block_headers_subscribe(&self) -> Result<HeaderNotification, Error> {
+        self.block_headers_subscribe_raw()?.try_into()
+    }
+
+    /// Tries to pop one queued notification for a new block header that we might have received.
+    /// Returns `None` if there are no items in the queue.
+    fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error> {
+        self.block_headers_pop_raw()?
+            .map(|raw| raw.try_into())
+            .transpose()
+    }
+
+    /// Gets the transaction with `txid`. Returns an error if not found.
+    fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
+        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
+    }
+
+    /// Batch version of [`transaction_get`](#method.transaction_get).
+    ///
+    /// Takes a list of `txids` and returns a list of transactions.
+    fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
+    where
+        I: IntoIterator<Item = &'t Txid>,
+    {
+        self.batch_transaction_get_raw(txids)?
+            .iter()
+            .map(|s| Ok(deserialize(s)?))
+            .collect()
+    }
+
+    /// Batch version of [`block_header`](#method.block_header).
+    ///
+    /// Takes a list of `heights` of blocks and returns a list of headers.
+    fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    where
+        I: IntoIterator<Item = u32>,
+    {
+        self.batch_block_header_raw(heights)?
+            .iter()
+            .map(|s| Ok(deserialize(s)?))
+            .collect()
+    }
+
+    /// Broadcasts a transaction to the network.
+    fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
+        let buffer: Vec<u8> = serialize(tx);
+        self.transaction_broadcast_raw(&buffer)
+    }
+
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.
     fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error>;
 
-    /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
-    fn block_headers_subscribe(&self) -> Result<HeaderNotification, Error>;
+    /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call and
+    /// returns the current tip as raw bytes instead of deserializing them.
+    fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error>;
 
     /// Tries to pop one queued notification for a new block header that we might have received.
-    /// Returns `None` if there are no items in the queue.
-    fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error>;
-
-    /// Gets the block header for height `height`.
-    fn block_header(&self, height: usize) -> Result<BlockHeader, Error>;
+    /// Returns a the header in raw bytes if a notification is found in the queue, None otherwise.
+    fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error>;
 
     /// Gets the raw bytes of block header for height `height`.
     fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error>;
@@ -85,18 +143,8 @@ pub trait ElectrumApi {
     where
         I: IntoIterator<Item = &'s Script>;
 
-    /// Gets the transaction with `txid`. Returns an error if not found.
-    fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error>;
-
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error>;
-
-    /// Batch version of [`transaction_get`](#method.transaction_get).
-    ///
-    /// Takes a list of `txids` and returns a list of transactions.
-    fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
-    where
-        I: IntoIterator<Item = &'t Txid>;
 
     /// Batch version of [`transaction_get_raw`](#method.transaction_get_raw).
     ///
@@ -112,13 +160,6 @@ pub trait ElectrumApi {
     where
         I: IntoIterator<Item = u32>;
 
-    /// Batch version of [`block_header`](#method.block_header).
-    ///
-    /// Takes a list of `heights` of blocks and returns a list of headers.
-    fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
-    where
-        I: IntoIterator<Item = u32>;
-
     /// Batch version of [`estimate_fee`](#method.estimate_fee).
     ///
     /// Takes a list of `numbers` of blocks and returns a list of fee required in
@@ -129,9 +170,6 @@ pub trait ElectrumApi {
 
     /// Broadcasts the raw bytes of a transaction to the network.
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error>;
-
-    /// Broadcasts a transaction to the network.
-    fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error>;
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;

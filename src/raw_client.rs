@@ -13,9 +13,9 @@ use std::sync::{Mutex, TryLockError};
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use bitcoin::consensus::encode::{deserialize, serialize};
+use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::hex::{FromHex, ToHex};
-use bitcoin::{BlockHeader, Script, Transaction, Txid};
+use bitcoin::{Script, Txid};
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -97,7 +97,7 @@ where
     last_id: AtomicUsize,
     waiting_map: Mutex<HashMap<usize, Sender<ChannelMessage>>>,
 
-    headers: Mutex<VecDeque<HeaderNotification>>,
+    headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
     #[cfg(feature = "debug-calls")]
@@ -436,7 +436,7 @@ impl<S: Read + Write> RawClient<S> {
     fn handle_notification(&self, method: &str, result: serde_json::Value) -> Result<(), Error> {
         match method {
             "blockchain.headers.subscribe" => self.headers.lock().unwrap().append(
-                &mut serde_json::from_value::<Vec<HeaderNotification>>(result)?
+                &mut serde_json::from_value::<Vec<RawHeaderNotification>>(result)?
                     .into_iter()
                     .collect(),
             ),
@@ -518,7 +518,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(answer)
     }
 
-    fn block_headers_subscribe(&self) -> Result<HeaderNotification, Error> {
+    fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.headers.subscribe",
@@ -529,12 +529,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(value)?)
     }
 
-    fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error> {
+    fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
         Ok(self.headers.lock().unwrap().pop_front())
-    }
-
-    fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
-        Ok(deserialize(&self.block_header_raw(height)?)?)
     }
 
     fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
@@ -717,10 +713,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
 
-    fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
-        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
-    }
-
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new_id(
@@ -735,16 +727,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
                 .as_str()
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
         )?)
-    }
-
-    fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
-    where
-        I: IntoIterator<Item = &'t Txid>,
-    {
-        self.batch_transaction_get_raw(txids)?
-            .iter()
-            .map(|s| Ok(deserialize(s)?))
-            .collect()
     }
 
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
@@ -770,16 +752,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             .collect()
     }
 
-    fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
-    where
-        I: IntoIterator<Item = u32>,
-    {
-        self.batch_block_header_raw(heights)?
-            .iter()
-            .map(|s| Ok(deserialize(s)?))
-            .collect()
-    }
-
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
         I: IntoIterator<Item = usize>,
@@ -797,11 +769,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         let result = self.call(req)?;
 
         Ok(serde_json::from_value(result)?)
-    }
-
-    fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
-        let buffer: Vec<u8> = serialize(tx);
-        self.transaction_broadcast_raw(&buffer)
     }
 
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
@@ -892,6 +859,22 @@ mod test {
         assert_eq!(resp.version, 0x01);
         assert_eq!(resp.time, 1231006505);
         assert_eq!(resp.nonce, 0x7c2bac1d);
+    }
+
+    #[test]
+    fn test_block_header_raw() {
+        let client = RawClient::new(get_test_server()).unwrap();
+
+        let resp = client.block_header_raw(0).unwrap();
+        assert_eq!(
+            resp,
+            vec![
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 59, 163, 237, 253, 122, 123, 18, 178, 122, 199, 44, 62,
+                103, 118, 143, 97, 127, 200, 27, 195, 136, 138, 81, 50, 58, 159, 184, 170, 75, 30,
+                94, 74, 41, 171, 95, 73, 255, 255, 0, 29, 29, 172, 43, 124
+            ]
+        );
     }
 
     #[test]
@@ -1007,6 +990,41 @@ mod test {
     }
 
     #[test]
+    fn test_transaction_get_raw() {
+        use bitcoin::hashes::hex::FromHex;
+        use bitcoin::Txid;
+
+        let client = RawClient::new(get_test_server()).unwrap();
+
+        let resp = client
+            .transaction_get_raw(
+                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            resp,
+            vec![
+                1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 84, 3, 240, 156, 9, 27, 77,
+                105, 110, 101, 100, 32, 98, 121, 32, 65, 110, 116, 80, 111, 111, 108, 49, 49, 57,
+                174, 0, 111, 32, 7, 77, 101, 40, 250, 190, 109, 109, 42, 177, 148, 141, 80, 179,
+                217, 145, 226, 160, 130, 29, 247, 67, 88, 237, 156, 37, 83, 175, 0, 199, 166, 31,
+                151, 119, 28, 160, 172, 238, 16, 110, 4, 0, 0, 0, 0, 0, 0, 0, 203, 236, 0, 128, 36,
+                97, 249, 5, 255, 255, 255, 255, 3, 84, 206, 172, 42, 0, 0, 0, 0, 25, 118, 169, 20,
+                17, 219, 228, 140, 198, 182, 23, 249, 198, 173, 175, 77, 158, 213, 246, 37, 177,
+                199, 203, 89, 136, 172, 0, 0, 0, 0, 0, 0, 0, 0, 38, 106, 36, 170, 33, 169, 237, 46,
+                87, 139, 206, 44, 166, 198, 188, 147, 89, 55, 115, 69, 216, 233, 133, 221, 95, 144,
+                199, 132, 33, 255, 166, 239, 165, 235, 96, 66, 142, 105, 140, 0, 0, 0, 0, 0, 0, 0,
+                0, 38, 106, 36, 185, 225, 27, 109, 47, 98, 29, 126, 195, 244, 90, 94, 202, 137,
+                211, 234, 106, 41, 76, 223, 58, 4, 46, 151, 48, 9, 88, 68, 112, 161, 41, 22, 17,
+                30, 44, 170, 1, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ]
+        )
+    }
+
+    #[test]
     fn test_transaction_get_merkle() {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
@@ -1036,5 +1054,26 @@ mod test {
     fn test_ping() {
         let client = RawClient::new(get_test_server()).unwrap();
         client.ping().unwrap();
+    }
+
+    #[test]
+    fn test_block_headers_subscribe() {
+        let client = RawClient::new(get_test_server()).unwrap();
+        let resp = client.block_headers_subscribe().unwrap();
+
+        assert!(resp.height >= 639000);
+    }
+
+    #[test]
+    fn test_script_subscribe() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server()).unwrap();
+
+        // Mt.Gox hack address
+        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
+
+        // Just make sure that the call returns Ok(something)
+        client.script_subscribe(&addr.script_pubkey()).unwrap();
     }
 }

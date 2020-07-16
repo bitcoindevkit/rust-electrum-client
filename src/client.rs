@@ -1,6 +1,6 @@
 //! Electrum Client
 
-use bitcoin::{BlockHeader, Script, Transaction, Txid};
+use bitcoin::{Script, Txid};
 
 use api::ElectrumApi;
 use batch::Batch;
@@ -78,18 +78,13 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn block_headers_subscribe(&self) -> Result<HeaderNotification, Error> {
-        impl_inner_call!(self, block_headers_subscribe)
+    fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
+        impl_inner_call!(self, block_headers_subscribe_raw)
     }
 
     #[inline]
-    fn block_headers_pop(&self) -> Result<Option<HeaderNotification>, Error> {
-        impl_inner_call!(self, block_headers_pop)
-    }
-
-    #[inline]
-    fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
-        impl_inner_call!(self, block_header, height)
+    fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
+        impl_inner_call!(self, block_headers_pop_raw)
     }
 
     #[inline]
@@ -170,21 +165,8 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
-        impl_inner_call!(self, transaction_get, txid)
-    }
-
-    #[inline]
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         impl_inner_call!(self, transaction_get_raw, txid)
-    }
-
-    #[inline]
-    fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
-    where
-        I: IntoIterator<Item = &'t Txid>,
-    {
-        impl_inner_call!(self, batch_transaction_get, txids)
     }
 
     #[inline]
@@ -204,14 +186,6 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
-    where
-        I: IntoIterator<Item = u32>,
-    {
-        impl_inner_call!(self, batch_block_header, heights)
-    }
-
-    #[inline]
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
         I: IntoIterator<Item = usize>,
@@ -222,11 +196,6 @@ impl ElectrumApi for Client {
     #[inline]
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
         impl_inner_call!(self, transaction_broadcast_raw, raw_tx)
-    }
-
-    #[inline]
-    fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
-        impl_inner_call!(self, transaction_broadcast, tx)
     }
 
     #[inline]
