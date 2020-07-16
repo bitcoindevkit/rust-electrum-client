@@ -342,12 +342,11 @@ impl<S: Read + Write> RawClient<S> {
                             // move on
                             trace!("Reader thread received response for {}", resp_id);
 
-                            let mut map = self.waiting_map.lock().unwrap();
-                            if let Some(sender) = map.get(&resp_id) {
+                            if let Some(sender) = self.waiting_map.lock().unwrap().remove(&resp_id)
+                            {
                                 sender
                                     .send(ChannelMessage::Response(resp))
                                     .expect("Unable to send the response");
-                                map.remove(&resp_id);
                             } else {
                                 warn!("Missing listener for {}", resp_id);
                             }
@@ -1097,5 +1096,13 @@ mod test {
 
         // Just make sure that the call returns Ok(something)
         client.script_subscribe(&addr.script_pubkey()).unwrap();
+    }
+
+    #[test]
+    fn test_request_after_error() {
+        let client = RawClient::new(get_test_server()).unwrap();
+
+        assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
+        assert!(client.server_features().is_ok());
     }
 }
