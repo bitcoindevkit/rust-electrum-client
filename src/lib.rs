@@ -40,7 +40,13 @@ extern crate webpki_roots;
 
 mod api;
 mod batch;
+
+#[cfg(any(
+    all(feature = "proxy", feature = "use-openssl"),
+    all(feature = "proxy", feature = "use-rustls")
+))]
 pub mod client;
+
 pub mod raw_client;
 mod stream;
 mod types;

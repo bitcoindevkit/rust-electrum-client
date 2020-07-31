@@ -11,8 +11,7 @@ use types::*;
 /// [`RawClient`](client/struct.RawClient.html) and provides a more user-friendly
 /// constructor that can choose the right backend based on the url prefix.
 ///
-/// **This is only available with the `default` features.**
-#[cfg(feature = "default")]
+/// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
 pub enum Client {
     #[doc(hidden)]
     TCP(RawClient<ElectrumPlaintextStream>),
@@ -32,7 +31,6 @@ macro_rules! impl_inner_call {
     }
 }
 
-#[cfg(feature = "default")]
 impl Client {
     /// Generic constructor that supports multiple backends and, optionally, a socks5 proxy.
     ///
@@ -70,7 +68,6 @@ impl Client {
     }
 }
 
-#[cfg(feature = "default")]
 impl ElectrumApi for Client {
     #[inline]
     fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
