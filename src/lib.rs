@@ -22,6 +22,8 @@
 pub extern crate bitcoin;
 extern crate core;
 extern crate log;
+#[cfg(feature = "aggregation")]
+extern crate miniscript;
 #[cfg(feature = "use-openssl")]
 extern crate openssl;
 #[cfg(all(
@@ -62,3 +64,7 @@ pub use batch::Batch;
 pub use client::*;
 pub use config::{ConfigBuilder, Socks5Config};
 pub use types::*;
+
+/// Miniscript wallet descriptor
+#[cfg(feature = "aggregation")]
+pub type Descriptor = miniscript::Descriptor<miniscript::descriptor::DescriptorPublicKey>;

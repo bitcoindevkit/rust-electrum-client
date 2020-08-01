@@ -3,10 +3,14 @@
 use std::convert::TryInto;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
+#[cfg(feature = "aggregation")]
+use bitcoin::util::bip32::ChildNumber;
 use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
 use batch::Batch;
 use types::*;
+#[cfg(feature = "aggregation")]
+use Descriptor;
 
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {
@@ -63,6 +67,51 @@ pub trait ElectrumApi {
     fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
         let buffer: Vec<u8> = serialize(tx);
         self.transaction_broadcast_raw(&buffer)
+    }
+
+    /// Fetches the total balance of a descriptor containing extended public keys
+    ///
+    /// ```no_run
+    /// use electrum_client::{Client, Descriptor, ElectrumApi};
+    ///
+    /// let client = Client::new("ssl://some.electrum.server:50002", None).unwrap();
+    /// let desc: Descriptor = "sh(wpkh(xpub6DP...WB/0/*))".parse().unwrap();
+    /// println!("External chain balance (sats): {}", client.descriptor_balance(desc, 10, false));
+    /// ```
+    #[cfg(feature = "aggregation")]
+    fn descriptor_balance(
+        &self,
+        descriptor: &Descriptor,
+        gap_limit: usize,
+        include_unconfirmed: bool,
+    ) -> Result<u64, Error> {
+        let mut gap = 0;
+        let mut sum_sats = 0u64;
+
+        for child in (0..).map(|c| ChildNumber::Normal { index: c }) {
+            let child_descriptor = descriptor.derive(child);
+
+            let ctx =
+                miniscript::descriptor::DescriptorPublicKeyCtx::new(&secp256k1::SECP256K1, child);
+            let script = child_descriptor.script_pubkey(ctx);
+
+            if self.script_get_history(&script)?.is_empty() {
+                gap += 1;
+            } else {
+                let balance = self.script_get_balance(&script)?;
+                sum_sats += balance.confirmed;
+                if include_unconfirmed {
+                    sum_sats += balance.unconfirmed;
+                }
+                gap = 0;
+            }
+
+            if gap >= gap_limit {
+                break;
+            }
+        }
+
+        Ok(sum_sats)
     }
 
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns

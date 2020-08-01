@@ -28,6 +28,9 @@ openssl = { version = "^0.10", optional = true }
 rustls = { version = "0.16.0", optional = true, features = ["dangerous_configuration"] }
 webpki = { version = "0.21.0", optional = true }
 webpki-roots = { version = "^0.19", optional = true }
+miniscript = { version = "4", optional = true}
+# Hack to activate global context feature, keep version in sync with rust-bitcoin
+secp256k1 = { version = "0.19.0", features = ["global-context", "rand-std"], optional = true }
 
 [features]
 default = ["proxy", "use-rustls"]
@@ -36,3 +39,4 @@ debug-calls = []
 proxy = ["socks"]
 use-rustls = ["webpki", "webpki-roots", "rustls"]
 use-openssl = ["openssl"]
+aggregation = ["miniscript", "secp256k1"]
