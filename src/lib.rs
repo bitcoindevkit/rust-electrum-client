@@ -53,5 +53,9 @@ mod types;
 
 pub use api::ElectrumApi;
 pub use batch::Batch;
+#[cfg(any(
+    all(feature = "proxy", feature = "use-openssl"),
+    all(feature = "proxy", feature = "use-rustls")
+))]
 pub use client::*;
 pub use types::*;
