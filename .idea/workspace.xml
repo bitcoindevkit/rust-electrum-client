@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
+    <generated />
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="CargoProjects">
+    <cargoProject FILE="$PROJECT_DIR$/Cargo.toml" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="bbf6a75d-fa81-4528-80a9-7d3273db89a9" name="Default Changelist" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="MacroExpansionManager">
+    <option name="directoryName" value="n2u4mf6k" />
+  </component>
+  <component name="ProjectId" id="1amfaaeaPPWhFukxmnaxqYlh2Ak" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">
+    <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
+    <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="cf.first.check.clang-format" value="false" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="nodejs_interpreter_path.stuck_in_default_project" value="undefined stuck path" />
+    <property name="nodejs_npm_path_reset_for_default_project" value="true" />
+  </component>
+  <component name="RunManager" selected="Cargo Command.test">
+    <configuration name="run" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="channel" value="DEFAULT" />
+      <option name="command" value="run" />
+      <option name="allFeatures" value="false" />
+      <option name="nocapture" value="false" />
+      <option name="emulateTerminal" value="false" />
+      <option name="backtrace" value="SHORT" />
+      <envs />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="test" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="channel" value="DEFAULT" />
+      <option name="command" value="test" />
+      <option name="allFeatures" value="true" />
+      <option name="nocapture" value="false" />
+      <option name="emulateTerminal" value="false" />
+      <option name="backtrace" value="SHORT" />
+      <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+      <envs />
+      <method v="2">
+        <option name="CARGO.BUILD_TASK_PROVIDER" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Cargo Command.test" />
+      <item itemvalue="Cargo Command.run" />
+    </list>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="bbf6a75d-fa81-4528-80a9-7d3273db89a9" name="Default Changelist" comment="" />
+      <created>1587345753467</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1587345753467</updated>
+      <workItem from="1587345755614" duration="2118000" />
+    </task>
+    <servers />
+  </component>
+  <component name="WindowStateProjectService">
+    <state x="708" y="1673" key="#com.intellij.execution.impl.EditConfigurationsDialog" timestamp="1587345897136">
+      <screen x="348" y="1463" width="1792" height="1097" />
+    </state>
+    <state x="708" y="1673" key="#com.intellij.execution.impl.EditConfigurationsDialog/0.23.2560.1417/348.1463.1792.1097@348.1463.1792.1097" timestamp="1587345897136" />
+    <state x="654" y="1724" key="#test" timestamp="1587345971241">
+      <screen x="348" y="1440" width="1792" height="1120" />
+    </state>
+    <state x="654" y="1724" key="#test/0.0.2560.1440/348.1440.1792.1120@348.1440.1792.1120" timestamp="1587345971241" />
+    <state x="654" y="1741" key="#test/0.23.2560.1417/348.1463.1792.1097@348.1463.1792.1097" timestamp="1587345864643" />
+    <state x="944" y="1768" width="600" height="486" key="find.popup" timestamp="1587394057294">
+      <screen x="348" y="1463" width="1792" height="1097" />
+    </state>
+    <state x="944" y="1768" width="600" height="486" key="find.popup/0.0.2560.1440/348.1463.1792.1097@348.1463.1792.1097" timestamp="1587394057294" />
+  </component>
+</project>
