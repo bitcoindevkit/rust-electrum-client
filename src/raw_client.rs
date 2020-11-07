@@ -145,9 +145,26 @@ pub type ElectrumSslStream = SslStream<TcpStream>;
 impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
-    pub fn new_ssl<A: ToSocketAddrsDomain>(
+    pub fn new_ssl<A: ToSocketAddrsDomain + Clone>(
         socket_addr: A,
         validate_domain: bool,
+    ) -> Result<Self, Error> {
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+        }
+
+        Self::new_ssl_from_stream(
+            socket_addr.clone(),
+            validate_domain,
+            TcpStream::connect(socket_addr)?,
+        )
+    }
+
+    /// Create a new SSL client using an existing TcpStream
+    pub fn new_ssl_from_stream<A: ToSocketAddrsDomain>(
+        socket_addr: A,
+        validate_domain: bool,
+        stream: TcpStream,
     ) -> Result<Self, Error> {
         let mut builder =
             SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
@@ -160,7 +177,7 @@ impl RawClient<ElectrumSslStream> {
         let connector = builder.build();
 
         let domain = socket_addr.domain().unwrap_or("NONE").to_string();
-        let stream = TcpStream::connect(socket_addr)?;
+
         let stream = connector
             .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
@@ -205,9 +222,25 @@ pub type ElectrumSslStream = StreamOwned<ClientSession, TcpStream>;
 impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
-    pub fn new_ssl<A: ToSocketAddrsDomain>(
+    pub fn new_ssl<A: ToSocketAddrsDomain + Clone>(
         socket_addr: A,
         validate_domain: bool,
+    ) -> Result<Self, Error> {
+        if validate_domain {
+            socket_addr.domain().ok_or(Error::MissingDomain)?;
+        }
+        Self::new_ssl_from_stream(
+            socket_addr.clone(),
+            validate_domain,
+            TcpStream::connect(socket_addr)?,
+        )
+    }
+
+    /// Create a new SSL client using an existing TcpStream
+    pub fn new_ssl_from_stream<A: ToSocketAddrsDomain>(
+        socket_addr: A,
+        validate_domain: bool,
+        tcp_stream: TcpStream,
     ) -> Result<Self, Error> {
         let mut config = ClientConfig::new();
         if validate_domain {
@@ -224,7 +257,6 @@ impl RawClient<ElectrumSslStream> {
         }
 
         let domain = socket_addr.domain().unwrap_or("NONE").to_string();
-        let tcp_stream = TcpStream::connect(socket_addr)?;
         let session = ClientSession::new(
             &std::sync::Arc::new(config),
             webpki::DNSNameRef::try_from_ascii_str(&domain)
