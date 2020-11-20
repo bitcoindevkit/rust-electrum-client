@@ -14,7 +14,7 @@
 //! ```no_run
 //! use electrum_client::{Client, ElectrumApi};
 //!
-//! let mut client = Client::new("tcp://electrum.blockstream.info:50001", None)?;
+//! let mut client = Client::new("tcp://electrum.blockstream.info:50001")?;
 //! let response = client.server_features()?;
 //! # Ok::<(), electrum_client::Error>(())
 //! ```
@@ -47,6 +47,8 @@ mod batch;
 ))]
 pub mod client;
 
+mod config;
+
 pub mod raw_client;
 mod stream;
 mod types;
@@ -58,4 +60,5 @@ pub use batch::Batch;
     all(feature = "proxy", feature = "use-rustls")
 ))]
 pub use client::*;
+pub use config::{ConfigBuilder, Socks5Config};
 pub use types::*;

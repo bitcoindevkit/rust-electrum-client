@@ -5,10 +5,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Mutex, TryLockError};
+use std::time::Duration;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -41,7 +42,7 @@ macro_rules! impl_batch_call {
             batch.$call(i);
         }
 
-        let resp = $self.batch_call(batch)?;
+        let resp = $self.batch_call(&batch)?;
         let mut answer = Vec::new();
 
         for x in resp {
@@ -131,10 +132,34 @@ where
 pub type ElectrumPlaintextStream = TcpStream;
 impl RawClient<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
-    pub fn new<A: ToSocketAddrs>(socket_addr: A) -> Result<Self, Error> {
-        let stream = TcpStream::connect(socket_addr)?;
+    pub fn new<A: ToSocketAddrs>(
+        socket_addrs: A,
+        timeout: Option<Duration>,
+    ) -> Result<Self, Error> {
+        let stream = match timeout {
+            Some(timeout) => {
+                let socket_addr = get_one_socket_addr(socket_addrs)?;
+                let stream = TcpStream::connect_timeout(&socket_addr, timeout)?;
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                stream
+            }
+            None => TcpStream::connect(socket_addrs)?,
+        };
 
         Ok(stream.into())
+    }
+}
+
+fn get_one_socket_addr<A: ToSocketAddrs>(socket_addrs: A) -> Result<SocketAddr, Error> {
+    let mut socket_iter = socket_addrs.to_socket_addrs()?;
+    let socket_addr = socket_iter
+        .next()
+        .ok_or(Error::WrongAddrsNumberWithTimeout)?;
+    // Unlike `connect`, `connect_timeout` takes a single [`SocketAddr`]
+    match socket_iter.next() {
+        None => Ok(socket_addr),
+        Some(_) => Err(Error::WrongAddrsNumberWithTimeout),
     }
 }
 
@@ -146,23 +171,37 @@ impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
     pub fn new_ssl<A: ToSocketAddrsDomain + Clone>(
-        socket_addr: A,
+        socket_addrs: A,
         validate_domain: bool,
+        timeout: Option<Duration>,
     ) -> Result<Self, Error> {
-        if validate_domain {
-            socket_addr.domain().ok_or(Error::MissingDomain)?;
-        }
-
-        Self::new_ssl_from_stream(
-            socket_addr.clone(),
+        debug!(
+            "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
+            socket_addrs.domain(),
             validate_domain,
-            TcpStream::connect(socket_addr)?,
-        )
+            timeout
+        );
+        if validate_domain {
+            socket_addrs.domain().ok_or(Error::MissingDomain)?;
+        }
+        match timeout {
+            Some(timeout) => {
+                let socket_addr = get_one_socket_addr(socket_addrs.clone())?;
+                let stream = TcpStream::connect_timeout(&socket_addr, timeout)?;
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+            }
+            None => {
+                let stream = TcpStream::connect(socket_addrs.clone())?;
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+            }
+        }
     }
 
     /// Create a new SSL client using an existing TcpStream
     pub fn new_ssl_from_stream<A: ToSocketAddrsDomain>(
-        socket_addr: A,
+        socket_addrs: A,
         validate_domain: bool,
         stream: TcpStream,
     ) -> Result<Self, Error> {
@@ -170,13 +209,13 @@ impl RawClient<ElectrumSslStream> {
             SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
         // TODO: support for certificate pinning
         if validate_domain {
-            socket_addr.domain().ok_or(Error::MissingDomain)?;
+            socket_addrs.domain().ok_or(Error::MissingDomain)?;
         } else {
             builder.set_verify(SslVerifyMode::NONE);
         }
         let connector = builder.build();
 
-        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
+        let domain = socket_addrs.domain().unwrap_or("NONE").to_string();
 
         let stream = connector
             .connect(&domain, stream)
@@ -223,17 +262,32 @@ impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
     pub fn new_ssl<A: ToSocketAddrsDomain + Clone>(
-        socket_addr: A,
+        socket_addrs: A,
         validate_domain: bool,
+        timeout: Option<Duration>,
     ) -> Result<Self, Error> {
-        if validate_domain {
-            socket_addr.domain().ok_or(Error::MissingDomain)?;
-        }
-        Self::new_ssl_from_stream(
-            socket_addr.clone(),
+        debug!(
+            "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
+            socket_addrs.domain(),
             validate_domain,
-            TcpStream::connect(socket_addr)?,
-        )
+            timeout
+        );
+        if validate_domain {
+            socket_addrs.domain().ok_or(Error::MissingDomain)?;
+        }
+        match timeout {
+            Some(timeout) => {
+                let socket_addr = get_one_socket_addr(socket_addrs.clone())?;
+                let stream = TcpStream::connect_timeout(&socket_addr, timeout)?;
+                stream.set_read_timeout(Some(timeout))?;
+                stream.set_write_timeout(Some(timeout))?;
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+            }
+            None => {
+                let stream = TcpStream::connect(socket_addrs.clone())?;
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+            }
+        }
     }
 
     /// Create a new SSL client using an existing TcpStream
@@ -276,12 +330,19 @@ impl RawClient<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as an
     /// unauthenticated socks proxy server. The DNS resolution of `target_addr`, if required, is done
     /// through the proxy. This allows to specify, for instance, `.onion` addresses.
-    pub fn new_proxy<A: ToSocketAddrs, T: ToTargetAddr>(
+    pub fn new_proxy<T: ToTargetAddr>(
         target_addr: T,
-        proxy_addr: A,
+        proxy: &crate::Socks5Config,
     ) -> Result<Self, Error> {
-        // TODO: support proxy credentials
-        let stream = Socks5Stream::connect(proxy_addr, target_addr)?;
+        let stream = match proxy.credentials.as_ref() {
+            Some(cred) => Socks5Stream::connect_with_password(
+                &proxy.addr,
+                target_addr,
+                &cred.username,
+                &cred.password,
+            )?,
+            None => Socks5Stream::connect(&proxy.addr, target_addr)?,
+        };
 
         Ok(stream.into())
     }
@@ -291,6 +352,7 @@ impl RawClient<ElectrumProxyStream> {
 enum ChannelMessage {
     Response(serde_json::Value),
     WakeUp,
+    Error,
 }
 
 impl<S: Read + Write> RawClient<S> {
@@ -336,7 +398,12 @@ impl<S: Read + Write> RawClient<S> {
                 loop {
                     raw_resp.clear();
 
-                    reader.read_line(&mut raw_resp)?;
+                    if reader.read_line(&mut raw_resp).is_err() {
+                        for (_, s) in self.waiting_map.lock().unwrap().drain() {
+                            s.send(ChannelMessage::Error)
+                                .expect("Unable to send ChannelMessage::Error");
+                        }
+                    }
                     trace!("<== {}", raw_resp);
 
                     let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
@@ -346,7 +413,7 @@ impl<S: Read + Write> RawClient<S> {
                     let resp_id = resp["id"]
                         .as_str()
                         .and_then(|s| s.parse().ok())
-                        .or(resp["id"].as_u64().map(|i| i as usize));
+                        .or_else(|| resp["id"].as_u64().map(|i| i as usize));
                     match resp_id {
                         Some(resp_id) if until_message == Some(resp_id) => {
                             // We have a valid id and it's exactly the one we were waiting for!
@@ -361,7 +428,7 @@ impl<S: Read + Write> RawClient<S> {
 
                             // If the map is not empty, we select a random thread to become the
                             // new reader thread.
-                            if let Some(sender) = map.values().nth(0) {
+                            if let Some(sender) = map.values().next() {
                                 sender
                                     .send(ChannelMessage::WakeUp)
                                     .expect("Unable to WakeUp a different thread");
@@ -464,6 +531,11 @@ impl<S: Read + Write> RawClient<S> {
 
                             continue;
                         }
+                        Ok(ChannelMessage::Error) => {
+                            warn!("Received ChannelMessage::Error");
+
+                            break Err(Error::ChannelError);
+                        }
                         e @ Err(_) => e.map(|_| ()).expect("Error receiving from channel"), // panic if there's something wrong with the channels
                     }
                 }
@@ -485,7 +557,7 @@ impl<S: Read + Write> RawClient<S> {
 
                 let queue = script_notifications
                     .get_mut(&unserialized.scripthash)
-                    .ok_or_else(|| Error::NotSubscribed(unserialized.scripthash))?;
+                    .ok_or(Error::NotSubscribed(unserialized.scripthash))?;
 
                 queue.push_back(unserialized.status);
             }
@@ -507,7 +579,7 @@ impl<S: Read + Write> RawClient<S> {
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
-    fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
+    fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
 
         let mut missing_responses = HashSet::new();
@@ -517,8 +589,12 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         // for every request id, so that we only have to monitor one receiver.
         let (sender, receiver) = channel();
 
-        for (method, params) in batch.into_iter() {
-            let req = Request::new_id(self.last_id.fetch_add(1, Ordering::SeqCst), &method, params);
+        for (method, params) in batch.iter() {
+            let req = Request::new_id(
+                self.last_id.fetch_add(1, Ordering::SeqCst),
+                &method,
+                params.to_vec(),
+            );
             missing_responses.insert(req.id);
 
             self.waiting_map
@@ -544,7 +620,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         self.increment_calls();
 
         while !missing_responses.is_empty() {
-            let req_id = *missing_responses.iter().nth(0).unwrap();
+            let req_id = *missing_responses.iter().next().unwrap();
             let resp = match self.recv(&receiver, req_id) {
                 Ok(resp) => resp,
                 Err(e) => {
@@ -655,7 +731,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             return Err(Error::AlreadySubscribed(script_hash));
         }
 
-        script_notifications.insert(script_hash.clone(), VecDeque::new());
+        script_notifications.insert(script_hash, VecDeque::new());
 
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -715,7 +791,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
         impl_batch_call!(self, scripts, script_get_balance)
     }
@@ -733,7 +809,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
         impl_batch_call!(self, scripts, script_get_history)
     }
@@ -761,7 +837,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
@@ -784,7 +860,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid>,
+        I: IntoIterator<Item = &'t Txid> + Clone,
     {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
@@ -795,7 +871,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32>,
+        I: IntoIterator<Item = u32> + Clone,
     {
         let headers_string: Result<Vec<String>, Error> =
             impl_batch_call!(self, heights, block_header);
@@ -807,7 +883,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize>,
+        I: IntoIterator<Item = usize> + Clone,
     {
         impl_batch_call!(self, numbers, estimate_fee)
     }
@@ -875,7 +951,7 @@ mod test {
 
     #[test]
     fn test_server_features_simple() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.server_features().unwrap();
         assert_eq!(
@@ -890,7 +966,7 @@ mod test {
     }
     #[test]
     fn test_relay_fee() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.relay_fee().unwrap();
         assert_eq!(resp, 0.00001);
@@ -898,7 +974,7 @@ mod test {
 
     #[test]
     fn test_estimate_fee() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.estimate_fee(10).unwrap();
         assert!(resp > 0.0);
@@ -906,7 +982,7 @@ mod test {
 
     #[test]
     fn test_block_header() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_header(0).unwrap();
         assert_eq!(resp.version, 0x01);
@@ -916,7 +992,7 @@ mod test {
 
     #[test]
     fn test_block_header_raw() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_header_raw(0).unwrap();
         assert_eq!(
@@ -932,7 +1008,7 @@ mod test {
 
     #[test]
     fn test_block_headers() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_headers(0, 4).unwrap();
         assert_eq!(resp.count, 4);
@@ -946,7 +1022,7 @@ mod test {
     fn test_script_get_balance() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
@@ -962,7 +1038,7 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
@@ -982,7 +1058,7 @@ mod test {
         use bitcoin::Txid;
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
@@ -1003,7 +1079,7 @@ mod test {
     fn test_batch_script_list_unspent() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
         let script_1 = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
@@ -1017,7 +1093,7 @@ mod test {
 
     #[test]
     fn test_batch_estimate_fee() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
         assert_eq!(resp.len(), 2);
@@ -1030,7 +1106,7 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get(
@@ -1047,7 +1123,7 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get_raw(
@@ -1082,7 +1158,7 @@ mod test {
         use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get_merkle(
@@ -1105,13 +1181,13 @@ mod test {
 
     #[test]
     fn test_ping() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
         client.ping().unwrap();
     }
 
     #[test]
     fn test_block_headers_subscribe() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
         let resp = client.block_headers_subscribe().unwrap();
 
         assert!(resp.height >= 639000);
@@ -1121,7 +1197,7 @@ mod test {
     fn test_script_subscribe() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
@@ -1132,7 +1208,7 @@ mod test {
 
     #[test]
     fn test_request_after_error() {
-        let client = RawClient::new(get_test_server()).unwrap();
+        let client = RawClient::new(get_test_server(), None).unwrap();
 
         assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
         assert!(client.server_features().is_ok());

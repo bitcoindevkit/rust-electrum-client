@@ -63,6 +63,14 @@ impl Batch {
         self.calls
             .push((String::from("blockchain.block.header"), params));
     }
+
+    /// Returns an iterator on the batch
+    pub fn iter(&self) -> BatchIter {
+        BatchIter {
+            batch: self,
+            index: 0,
+        }
+    }
 }
 
 impl std::iter::IntoIterator for Batch {
@@ -71,6 +79,21 @@ impl std::iter::IntoIterator for Batch {
 
     fn into_iter(self) -> Self::IntoIter {
         self.calls.into_iter()
+    }
+}
+
+pub struct BatchIter<'a> {
+    batch: &'a Batch,
+    index: usize,
+}
+
+impl<'a> std::iter::Iterator for BatchIter<'a> {
+    type Item = &'a (String, Vec<Param>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let val = self.batch.calls.get(self.index);
+        self.index += 1;
+        val
     }
 }
 

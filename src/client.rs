@@ -1,9 +1,14 @@
 //! Electrum Client
 
+use std::sync::RwLock;
+
+use log::{info, warn};
+
 use bitcoin::{Script, Txid};
 
 use api::ElectrumApi;
 use batch::Batch;
+use config::Config;
 use raw_client::*;
 use types::*;
 
@@ -12,7 +17,7 @@ use types::*;
 /// constructor that can choose the right backend based on the url prefix.
 ///
 /// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
-pub enum Client {
+pub enum ClientType {
     #[doc(hidden)]
     TCP(RawClient<ElectrumPlaintextStream>),
     #[doc(hidden)]
@@ -21,18 +26,89 @@ pub enum Client {
     Socks5(RawClient<ElectrumProxyStream>),
 }
 
+/// Generalized Electrum client that supports multiple backends. Can re-instantiate client_type if connections
+/// drops
+pub struct Client {
+    client_type: RwLock<ClientType>,
+    config: Config,
+    url: String,
+}
+
 macro_rules! impl_inner_call {
     ( $self:expr, $name:ident $(, $args:expr)* ) => {
-        match $self {
-            Client::TCP(inner) => inner.$name( $($args, )* ),
-            Client::SSL(inner) => inner.$name( $($args, )* ),
-            Client::Socks5(inner) => inner.$name( $($args, )* ),
+    {
+        let mut count = 0;
+        let mut errors = Vec::with_capacity(count as usize);
+        loop {
+            if count == $self.config.retry() {
+                return Err(Error::AllAttemptsErrored(errors));
+            }
+            count += 1;
+            let read_client = $self.client_type.read().unwrap();
+            let res = match &*read_client {
+                ClientType::TCP(inner) => inner.$name( $($args, )* ),
+                ClientType::SSL(inner) => inner.$name( $($args, )* ),
+                ClientType::Socks5(inner) => inner.$name( $($args, )* ),
+            };
+            drop(read_client);
+            match res {
+                Ok(val) => return Ok(val),
+                Err(Error::Protocol(e)) => {
+                    warn!("Error::Protocol {:?}", e);
+                    continue
+                },
+                Err(e) => {
+                    match $self.client_type.try_write() {
+                        Ok(mut write_client) => {
+                            warn!("retry:{}/{} {:?}", count, $self.config.retry(), e);
+                            errors.push(e);
+                            match ClientType::from_config(&$self.url, &$self.config) {
+                                Ok(new_client) => {
+                                    info!("Succesfully created new client");
+                                    *write_client = new_client;
+                                },
+                                Err(e) => {
+                                    warn!("Cannot create new client {:?}", e);
+                                }
+                            }
+
+                        },
+                        Err(_) => (),  // another thread is trying to retrying the client
+                    }
+                },
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(count as u64));
+        }}
+    }
+}
+
+impl ClientType {
+    ///  Constructor that supports multiple backends and allows configuration through
+    /// the [Config]
+    pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
+        if url.starts_with("ssl://") {
+            if config.socks5().is_some() {
+                return Err(Error::SSLOverSocks5);
+            }
+
+            let url = url.replacen("ssl://", "", 1);
+            let client =
+                RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
+            Ok(ClientType::SSL(client))
+        } else {
+            let url = url.replacen("tcp://", "", 1);
+
+            Ok(match config.socks5().as_ref() {
+                None => ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?),
+                Some(socks5) => ClientType::Socks5(RawClient::new_proxy(url.as_str(), socks5)?),
+            })
         }
     }
 }
 
 impl Client {
-    /// Generic constructor that supports multiple backends and, optionally, a socks5 proxy.
+    /// Default constructor supporting multiple backend by providing a prefix
     ///
     /// Supported prefixes are:
     /// - tcp:// for a TCP plaintext client.
@@ -40,37 +116,31 @@ impl Client {
     ///
     /// If no prefix is specified, then `tcp://` is assumed.
     ///
-    /// The `socks5` argument can optionally be prefixed with `socks5://`.
+    /// See [Client::from_config] for more configuration options
+    ///
+    pub fn new(url: &str) -> Result<Self, Error> {
+        Self::from_config(url, Config::default())
+    }
+
+    /// Generic constructor that supports multiple backends and allows configuration through
+    /// the [Config]
     ///
     /// **NOTE**: SSL-over-socks5 is currently not supported and will generate a runtime error.
-    pub fn new(url: &str, socks5: Option<&str>) -> Result<Self, Error> {
-        let socks5 = socks5.map(|s| s.replacen("socks5://", "", 1));
+    ///
+    pub fn from_config(url: &str, config: Config) -> Result<Self, Error> {
+        let client_type = RwLock::new(ClientType::from_config(url, &config)?);
 
-        if url.starts_with("ssl://") {
-            if socks5.is_some() {
-                return Err(Error::SSLOverSocks5);
-            }
-
-            let url = url.replacen("ssl://", "", 1);
-            let client = RawClient::new_ssl(url.as_str(), true)?;
-
-            Ok(Client::SSL(client))
-        } else {
-            let url = url.replacen("tcp://", "", 1);
-
-            let client = match socks5 {
-                None => Client::TCP(RawClient::new(url.as_str())?),
-                Some(socks5) => Client::Socks5(RawClient::new_proxy(url.as_str(), socks5)?),
-            };
-
-            Ok(client)
-        }
+        Ok(Client {
+            client_type,
+            config,
+            url: url.to_string(),
+        })
     }
 }
 
 impl ElectrumApi for Client {
     #[inline]
-    fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error> {
+    fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         impl_inner_call!(self, batch_call, batch)
     }
 
@@ -127,9 +197,9 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
-        impl_inner_call!(self, batch_script_get_balance, scripts)
+        impl_inner_call!(self, batch_script_get_balance, scripts.clone())
     }
 
     #[inline]
@@ -140,9 +210,9 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
-        impl_inner_call!(self, batch_script_get_history, scripts)
+        impl_inner_call!(self, batch_script_get_history, scripts.clone())
     }
 
     #[inline]
@@ -156,9 +226,9 @@ impl ElectrumApi for Client {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>,
+        I: IntoIterator<Item = &'s Script> + Clone,
     {
-        impl_inner_call!(self, batch_script_list_unspent, scripts)
+        impl_inner_call!(self, batch_script_list_unspent, scripts.clone())
     }
 
     #[inline]
@@ -169,25 +239,25 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid>,
+        I: IntoIterator<Item = &'t Txid> + Clone,
     {
-        impl_inner_call!(self, batch_transaction_get_raw, txids)
+        impl_inner_call!(self, batch_transaction_get_raw, txids.clone())
     }
 
     #[inline]
     fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32>,
+        I: IntoIterator<Item = u32> + Clone,
     {
-        impl_inner_call!(self, batch_block_header_raw, heights)
+        impl_inner_call!(self, batch_block_header_raw, heights.clone())
     }
 
     #[inline]
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize>,
+        I: IntoIterator<Item = usize> + Clone,
     {
-        impl_inner_call!(self, batch_estimate_fee, numbers)
+        impl_inner_call!(self, batch_estimate_fee, numbers.clone())
     }
 
     #[inline]

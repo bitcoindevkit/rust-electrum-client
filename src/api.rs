@@ -38,7 +38,7 @@ pub trait ElectrumApi {
     /// Takes a list of `txids` and returns a list of transactions.
     fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
     where
-        I: IntoIterator<Item = &'t Txid>,
+        I: IntoIterator<Item = &'t Txid> + Clone,
     {
         self.batch_transaction_get_raw(txids)?
             .iter()
@@ -49,9 +49,9 @@ pub trait ElectrumApi {
     /// Batch version of [`block_header`](#method.block_header).
     ///
     /// Takes a list of `heights` of blocks and returns a list of headers.
-    fn batch_block_header<'s, I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    fn batch_block_header<I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
-        I: IntoIterator<Item = u32>,
+        I: IntoIterator<Item = u32> + Clone,
     {
         self.batch_block_header_raw(heights)?
             .iter()
@@ -68,7 +68,7 @@ pub trait ElectrumApi {
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.
-    fn batch_call(&self, batch: Batch) -> Result<Vec<serde_json::Value>, Error>;
+    fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error>;
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call and
     /// returns the current tip as raw bytes instead of deserializing them.
@@ -118,7 +118,7 @@ pub trait ElectrumApi {
     /// Takes a list of scripts and returns a list of balance responses.
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script>;
+        I: IntoIterator<Item = &'s Script> + Clone;
 
     /// Returns the history for a *scriptPubKey*
     fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error>;
@@ -128,7 +128,7 @@ pub trait ElectrumApi {
     /// Takes a list of scripts and returns a list of history responses.
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>;
+        I: IntoIterator<Item = &'s Script> + Clone;
 
     /// Returns the list of unspent outputs for a *scriptPubKey*
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error>;
@@ -141,7 +141,7 @@ pub trait ElectrumApi {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script>;
+        I: IntoIterator<Item = &'s Script> + Clone;
 
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error>;
@@ -151,22 +151,22 @@ pub trait ElectrumApi {
     /// Takes a list of `txids` and returns a list of transactions raw bytes.
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid>;
+        I: IntoIterator<Item = &'t Txid> + Clone;
 
     /// Batch version of [`block_header_raw`](#method.block_header_raw).
     ///
     /// Takes a list of `heights` of blocks and returns a list of block header raw bytes.
-    fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
+    fn batch_block_header_raw<I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32>;
+        I: IntoIterator<Item = u32> + Clone;
 
     /// Batch version of [`estimate_fee`](#method.estimate_fee).
     ///
     /// Takes a list of `numbers` of blocks and returns a list of fee required in
     /// **Satoshis per kilobyte** to confirm a transaction in the given number of blocks.
-    fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
+    fn batch_estimate_fee<I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize>;
+        I: IntoIterator<Item = usize> + Clone;
 
     /// Broadcasts the raw bytes of a transaction to the network.
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error>;

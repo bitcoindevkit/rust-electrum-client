@@ -288,6 +288,14 @@ pub enum Error {
     MissingDomain,
     /// SSL over a socks5 proxy is currently not supported
     SSLOverSocks5,
+    /// Made one or multiple attempts, always in Error
+    AllAttemptsErrored(Vec<Error>),
+    /// There was an error transmitted from the reader thread to others
+    ChannelError,
+    /// Setting both a proxy and a timeout in `Config` results in this error
+    BothSocksAndTimeout,
+    /// Setting both a timeout and passing zero or more than one socket addrs is an error
+    WrongAddrsNumberWithTimeout,
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
