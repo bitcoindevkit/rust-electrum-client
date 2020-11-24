@@ -37,13 +37,8 @@ pub struct Client {
 macro_rules! impl_inner_call {
     ( $self:expr, $name:ident $(, $args:expr)* ) => {
     {
-        let mut count = 0;
-        let mut errors = Vec::with_capacity(count as usize);
+        let mut errors = vec![];
         loop {
-            if count == $self.config.retry() {
-                return Err(Error::AllAttemptsErrored(errors));
-            }
-            count += 1;
             let read_client = $self.client_type.read().unwrap();
             let res = match &*read_client {
                 ClientType::TCP(inner) => inner.$name( $($args, )* ),
@@ -53,32 +48,40 @@ macro_rules! impl_inner_call {
             drop(read_client);
             match res {
                 Ok(val) => return Ok(val),
-                Err(Error::Protocol(e)) => {
-                    warn!("Error::Protocol {:?}", e);
-                    continue
+                Err(Error::Protocol(_)) => {
+                    return res;
                 },
                 Err(e) => {
-                    match $self.client_type.try_write() {
-                        Ok(mut write_client) => {
-                            warn!("retry:{}/{} {:?}", count, $self.config.retry(), e);
-                            errors.push(e);
+                    warn!("call retry:{}/{} {:?}", errors.len() + 1 , $self.config.retry(), e);
+                    errors.push(e);
+                    if errors.len() as u8 == $self.config.retry() {
+                        return Err(Error::AllAttemptsErrored(errors));
+                    }
+
+                    // Only one thread will try to recreate the client getting the write lock,
+                    // other eventual threads will get Err and will block at the beginning of
+                    // previous loop when trying to read()
+                    if let Ok(mut write_client) = $self.client_type.try_write() {
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(errors.len() as u64));
                             match ClientType::from_config(&$self.url, &$self.config) {
                                 Ok(new_client) => {
                                     info!("Succesfully created new client");
                                     *write_client = new_client;
+                                    break;
                                 },
                                 Err(e) => {
-                                    warn!("Cannot create new client {:?}", e);
+                                    warn!("client retry:{}/{} {:?}", errors.len() + 1, $self.config.retry(), e);
+                                    errors.push(e);
+                                    if errors.len() as u8 == $self.config.retry() {
+                                        return Err(Error::AllAttemptsErrored(errors));
+                                    }
                                 }
                             }
-
-                        },
-                        Err(_) => (),  // another thread is trying to retrying the client
+                        }
                     }
                 },
             }
-
-            std::thread::sleep(std::time::Duration::from_secs(count as u64));
         }}
     }
 }
