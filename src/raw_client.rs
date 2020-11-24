@@ -8,7 +8,7 @@ use std::mem::drop;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Mutex, TryLockError};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::time::Duration;
 
 #[allow(unused_imports)]
@@ -352,7 +352,7 @@ impl RawClient<ElectrumProxyStream> {
 enum ChannelMessage {
     Response(serde_json::Value),
     WakeUp,
-    Error,
+    Error(Arc<std::io::Error>),
 }
 
 impl<S: Read + Write> RawClient<S> {
@@ -398,9 +398,10 @@ impl<S: Read + Write> RawClient<S> {
                 loop {
                     raw_resp.clear();
 
-                    if reader.read_line(&mut raw_resp).is_err() {
+                    if let Err(e) = reader.read_line(&mut raw_resp) {
+                        let error = Arc::new(e);
                         for (_, s) in self.waiting_map.lock().unwrap().drain() {
-                            s.send(ChannelMessage::Error)
+                            s.send(ChannelMessage::Error(error.clone()))
                                 .expect("Unable to send ChannelMessage::Error");
                         }
                     }
@@ -531,10 +532,10 @@ impl<S: Read + Write> RawClient<S> {
 
                             continue;
                         }
-                        Ok(ChannelMessage::Error) => {
+                        Ok(ChannelMessage::Error(e)) => {
                             warn!("Received ChannelMessage::Error");
 
-                            break Err(Error::ChannelError);
+                            break Err(Error::ChannelError(e));
                         }
                         e @ Err(_) => e.map(|_| ()).expect("Error receiving from channel"), // panic if there's something wrong with the channels
                     }

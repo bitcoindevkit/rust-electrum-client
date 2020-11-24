@@ -4,6 +4,7 @@
 
 use std::convert::TryFrom;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
@@ -291,7 +292,7 @@ pub enum Error {
     /// Made one or multiple attempts, always in Error
     AllAttemptsErrored(Vec<Error>),
     /// There was an error transmitted from the reader thread to others
-    ChannelError,
+    ChannelError(Arc<std::io::Error>),
     /// Setting both a proxy and a timeout in `Config` results in this error
     BothSocksAndTimeout,
     /// Setting both a timeout and passing zero or more than one socket addrs is an error
