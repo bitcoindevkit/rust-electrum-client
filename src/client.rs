@@ -63,7 +63,7 @@ macro_rules! impl_inner_call {
                     // previous loop when trying to read()
                     if let Ok(mut write_client) = $self.client_type.try_write() {
                         loop {
-                            std::thread::sleep(std::time::Duration::from_secs(errors.len() as u64));
+                            std::thread::sleep(std::time::Duration::from_secs((1 << errors.len()).min(30) as u64));
                             match ClientType::from_config(&$self.url, &$self.config) {
                                 Ok(new_client) => {
                                     info!("Succesfully created new client");
