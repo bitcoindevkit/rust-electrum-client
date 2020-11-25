@@ -291,8 +291,8 @@ pub enum Error {
     SSLOverSocks5,
     /// Made one or multiple attempts, always in Error
     AllAttemptsErrored(Vec<Error>),
-    /// There was an error transmitted from the reader thread to others
-    ChannelError(Arc<std::io::Error>),
+    /// There was an io error reading the socket, to be shared between threads
+    SharedIOError(Arc<std::io::Error>),
     /// Setting both a proxy and a timeout in `Config` results in this error
     BothSocksAndTimeout,
     /// Setting both a timeout and passing zero or more than one socket addrs is an error

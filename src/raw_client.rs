@@ -404,6 +404,7 @@ impl<S: Read + Write> RawClient<S> {
                             s.send(ChannelMessage::Error(error.clone()))
                                 .expect("Unable to send ChannelMessage::Error");
                         }
+                        return Err(Error::SharedIOError(error.clone()));
                     }
                     trace!("<== {}", raw_resp);
 
@@ -535,7 +536,7 @@ impl<S: Read + Write> RawClient<S> {
                         Ok(ChannelMessage::Error(e)) => {
                             warn!("Received ChannelMessage::Error");
 
-                            break Err(Error::ChannelError(e));
+                            break Err(Error::SharedIOError(e));
                         }
                         e @ Err(_) => e.map(|_| ()).expect("Error receiving from channel"), // panic if there's something wrong with the channels
                     }

@@ -111,7 +111,7 @@ impl ClientType {
 }
 
 impl Client {
-    /// Default constructor supporting multiple backend by providing a prefix
+    /// Default constructor supporting multiple backends by providing a prefix
     ///
     /// Supported prefixes are:
     /// - tcp:// for a TCP plaintext client.
