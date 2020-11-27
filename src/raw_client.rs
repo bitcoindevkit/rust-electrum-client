@@ -1113,14 +1113,13 @@ mod test {
         let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
 
         assert!(resp.len() >= 329);
-        assert_eq!(resp[0].value, 7995600000000);
-        assert_eq!(resp[0].height, 111194);
-        assert_eq!(resp[0].tx_pos, 0);
-        assert_eq!(
-            resp[0].tx_hash,
-            Txid::from_hex("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
-                .unwrap()
-        );
+        let txid = "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114";
+        let txid = Txid::from_hex(txid).unwrap();
+        let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].value, 7995600000000);
+        assert_eq!(txs[0].height, 111194);
+        assert_eq!(txs[0].tx_pos, 0);
     }
 
     #[test]
