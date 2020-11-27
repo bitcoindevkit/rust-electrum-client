@@ -18,11 +18,11 @@ use types::*;
 ///
 /// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
 pub enum ClientType {
-    #[doc(hidden)]
+    #[allow(missing_docs)]
     TCP(RawClient<ElectrumPlaintextStream>),
-    #[doc(hidden)]
+    #[allow(missing_docs)]
     SSL(RawClient<ElectrumSslStream>),
-    #[doc(hidden)]
+    #[allow(missing_docs)]
     Socks5(RawClient<ElectrumProxyStream>),
 }
 

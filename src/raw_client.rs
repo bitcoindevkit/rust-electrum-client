@@ -450,7 +450,7 @@ impl<S: Read + Write> RawClient<S> {
                             s.send(ChannelMessage::Error(error.clone()))
                                 .expect("Unable to send ChannelMessage::Error");
                         }
-                        return Err(Error::SharedIOError(error.clone()));
+                        return Err(Error::SharedIOError(error));
                     }
                     trace!("<== {}", raw_resp);
 
