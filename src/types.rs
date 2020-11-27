@@ -287,8 +287,6 @@ pub enum Error {
     InvalidDNSNameError(String),
     /// Missing domain while it was explicitly asked to validate it
     MissingDomain,
-    /// SSL over a socks5 proxy is currently not supported
-    SSLOverSocks5,
     /// Made one or multiple attempts, always in Error
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads

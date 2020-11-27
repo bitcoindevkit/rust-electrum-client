@@ -27,7 +27,7 @@ use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
 use rustls::{ClientConfig, ClientSession, StreamOwned};
 
 #[cfg(any(feature = "default", feature = "proxy"))]
-use socks::{Socks5Stream, ToTargetAddr};
+use socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
 use stream::ClonableStream;
 
@@ -74,6 +74,28 @@ impl ToSocketAddrsDomain for (&str, u16) {
         self.0.domain()
     }
 }
+
+impl ToSocketAddrsDomain for TargetAddr {
+    fn domain(&self) -> Option<&str> {
+        match self {
+            TargetAddr::Ip(_) => None,
+            TargetAddr::Domain(domain, _) => Some(domain.as_str()),
+        }
+    }
+}
+
+macro_rules! impl_to_socket_addrs_domain {
+    ( $ty:ty ) => {
+        impl ToSocketAddrsDomain for $ty {}
+    };
+}
+
+impl_to_socket_addrs_domain!(std::net::SocketAddr);
+impl_to_socket_addrs_domain!(std::net::SocketAddrV4);
+impl_to_socket_addrs_domain!(std::net::SocketAddrV6);
+impl_to_socket_addrs_domain!((std::net::IpAddr, u16));
+impl_to_socket_addrs_domain!((std::net::Ipv4Addr, u16));
+impl_to_socket_addrs_domain!((std::net::Ipv6Addr, u16));
 
 /// Instance of an Electrum client
 ///
@@ -327,8 +349,8 @@ impl RawClient<ElectrumSslStream> {
 pub type ElectrumProxyStream = Socks5Stream;
 #[cfg(any(feature = "default", feature = "proxy"))]
 impl RawClient<ElectrumProxyStream> {
-    /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as an
-    /// unauthenticated socks proxy server. The DNS resolution of `target_addr`, if required, is done
+    /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as a
+    /// socks proxy server. The DNS resolution of `target_addr`, if required, is done
     /// through the proxy. This allows to specify, for instance, `.onion` addresses.
     pub fn new_proxy<T: ToTargetAddr>(
         target_addr: T,
@@ -345,6 +367,30 @@ impl RawClient<ElectrumProxyStream> {
         };
 
         Ok(stream.into())
+    }
+
+    #[cfg(any(feature = "use-openssl", feature = "use-rustls"))]
+    /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
+    /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
+    /// allows to specify, for instance, `.onion` addresses.
+    pub fn new_proxy_ssl<T: ToTargetAddr>(
+        target_addr: T,
+        validate_domain: bool,
+        proxy: &crate::Socks5Config,
+    ) -> Result<RawClient<ElectrumSslStream>, Error> {
+        let target = target_addr.to_target_addr()?;
+
+        let stream = match proxy.credentials.as_ref() {
+            Some(cred) => Socks5Stream::connect_with_password(
+                &proxy.addr,
+                target_addr,
+                &cred.username,
+                &cred.password,
+            )?,
+            None => Socks5Stream::connect(&proxy.addr, target.clone())?,
+        };
+
+        RawClient::new_ssl_from_stream(target, validate_domain, stream.into_inner())
     }
 }
 

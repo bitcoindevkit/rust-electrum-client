@@ -87,17 +87,20 @@ macro_rules! impl_inner_call {
 }
 
 impl ClientType {
-    ///  Constructor that supports multiple backends and allows configuration through
+    /// Constructor that supports multiple backends and allows configuration through
     /// the [Config]
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
         if url.starts_with("ssl://") {
-            if config.socks5().is_some() {
-                return Err(Error::SSLOverSocks5);
-            }
-
             let url = url.replacen("ssl://", "", 1);
-            let client =
-                RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
+            let client = match config.socks5() {
+                Some(socks5) => {
+                    RawClient::new_proxy_ssl(url.as_str(), config.validate_domain(), socks5)?
+                }
+                None => {
+                    RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
+                }
+            };
+
             Ok(ClientType::SSL(client))
         } else {
             let url = url.replacen("tcp://", "", 1);
@@ -127,9 +130,6 @@ impl Client {
 
     /// Generic constructor that supports multiple backends and allows configuration through
     /// the [Config]
-    ///
-    /// **NOTE**: SSL-over-socks5 is currently not supported and will generate a runtime error.
-    ///
     pub fn from_config(url: &str, config: Config) -> Result<Self, Error> {
         let client_type = RwLock::new(ClientType::from_config(url, &config)?);
 
