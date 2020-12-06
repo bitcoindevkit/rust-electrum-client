@@ -139,6 +139,27 @@ pub trait ElectrumApi {
         Ok(balance)
     }
 
+    /// Fetches all UTXOs for a given descriptor.
+    #[cfg(feature = "aggregation")]
+    fn descriptor_utxos(
+        &self,
+        descriptor: &Descriptor,
+        gap_limit: usize,
+    ) -> Result<Vec<(ChildNumber, ListUnspentRes)>, Error> {
+        let scripts = self.descriptor_used_scripts(descriptor, gap_limit)?;
+        let batch_utxos = self.batch_script_list_unspent(scripts.iter().map(|s| &s.1))?;
+
+        // Flatten the returned result and attach the appropriate child numbers
+        let child_utxos = scripts
+            .iter()
+            .map(|s| s.0)
+            .zip(batch_utxos)
+            .flat_map(|(child, utxos)| utxos.into_iter().map(move |utxo| (child, utxo)))
+            .collect::<Vec<_>>();
+
+        Ok(child_utxos)
+    }
+
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.
