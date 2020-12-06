@@ -8,6 +8,8 @@ use bitcoin::util::bip32::ChildNumber;
 use bitcoin::{BlockHeader, Script, Transaction, Txid};
 
 use batch::Batch;
+#[cfg(feature = "aggregation")]
+use miniscript::DescriptorPublicKey;
 use types::*;
 #[cfg(feature = "aggregation")]
 use Descriptor;
@@ -69,6 +71,42 @@ pub trait ElectrumApi {
         self.transaction_broadcast_raw(&buffer)
     }
 
+    /// Returns all scripts derived from a descriptor that ever held any UTXOs. The function will
+    /// look `gap_limit` many scripts beyond the last used one.
+    #[cfg(feature = "aggregation")]
+    fn descriptor_used_scripts(
+        &self,
+        descriptor: &Descriptor,
+        gap_limit: usize,
+    ) -> Result<Vec<(ChildNumber, Script)>, Error> {
+        let mut gap = 0;
+        let mut scripts = Vec::new();
+
+        for child in (0..).map(|c| ChildNumber::Normal { index: c }) {
+            let ctx =
+                miniscript::descriptor::DescriptorPublicKeyCtx::new(&secp256k1::SECP256K1, child);
+            let script = descriptor.script_pubkey(ctx);
+
+            // TODO: possibly use batch mode to reduce RTT impact on runtime
+            if self.script_get_history(&script)?.is_empty() {
+                gap += 1;
+            } else {
+                scripts.push((child, script));
+            }
+
+            if gap >= gap_limit {
+                break;
+            }
+
+            // Don't get stuck in an infinite loop if the descriptor only represents one script
+            if !descriptor_is_derivable(descriptor) {
+                break;
+            }
+        }
+
+        Ok(scripts)
+    }
+
     /// Fetches the total balance of a descriptor containing extended public keys
     ///
     /// ```no_run
@@ -85,33 +123,20 @@ pub trait ElectrumApi {
         gap_limit: usize,
         include_unconfirmed: bool,
     ) -> Result<u64, Error> {
-        let mut gap = 0;
-        let mut sum_sats = 0u64;
-
-        for child in (0..).map(|c| ChildNumber::Normal { index: c }) {
-            let child_descriptor = descriptor.derive(child);
-
-            let ctx =
-                miniscript::descriptor::DescriptorPublicKeyCtx::new(&secp256k1::SECP256K1, child);
-            let script = child_descriptor.script_pubkey(ctx);
-
-            if self.script_get_history(&script)?.is_empty() {
-                gap += 1;
-            } else {
-                let balance = self.script_get_balance(&script)?;
-                sum_sats += balance.confirmed;
+        let scripts = self.descriptor_used_scripts(descriptor, gap_limit)?;
+        let balance = self
+            .batch_script_get_balance(scripts.iter().map(|s| &s.1))?
+            .iter()
+            .map(|balance| {
                 if include_unconfirmed {
-                    sum_sats += balance.unconfirmed;
+                    balance.confirmed + balance.unconfirmed
+                } else {
+                    balance.confirmed
                 }
-                gap = 0;
-            }
+            })
+            .sum();
 
-            if gap >= gap_limit {
-                break;
-            }
-        }
-
-        Ok(sum_sats)
+        Ok(balance)
     }
 
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
@@ -233,4 +258,32 @@ pub trait ElectrumApi {
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
     fn calls_made(&self) -> usize;
+}
+
+#[cfg(feature = "aggregation")]
+fn descriptor_is_derivable(descriptor: &Descriptor) -> bool {
+    let mut contains_wildcard_pk = false;
+    let mut contains_wildcard_pkh = false;
+
+    fn is_wildcard(
+        pk: &DescriptorPublicKey,
+        out_var: &mut bool,
+    ) -> Result<DescriptorPublicKey, ()> {
+        match pk {
+            DescriptorPublicKey::XPub(ref xpub) => {
+                *out_var |= xpub.is_wildcard;
+            }
+            DescriptorPublicKey::SinglePub(_) => {}
+        }
+        Ok(pk.clone())
+    }
+
+    descriptor
+        .translate_pk(
+            |pk| is_wildcard(pk, &mut contains_wildcard_pk),
+            |pk| is_wildcard(pk, &mut contains_wildcard_pkh),
+        )
+        .expect("Translation can't fail.");
+
+    contains_wildcard_pk | contains_wildcard_pkh
 }
