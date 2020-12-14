@@ -54,6 +54,7 @@ mod config;
 pub mod raw_client;
 mod stream;
 mod types;
+mod util;
 
 pub use api::ElectrumApi;
 pub use batch::Batch;
