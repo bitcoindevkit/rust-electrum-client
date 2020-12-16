@@ -992,6 +992,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 mod test {
     use super::RawClient;
     use api::ElectrumApi;
+    use bitcoin::util::bip32::ChildNumber;
+    use Descriptor;
 
     fn get_test_server() -> String {
         std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("electrum.blockstream.info:50001".into())
@@ -1259,5 +1261,29 @@ mod test {
 
         assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
         assert!(client.server_features().is_ok());
+    }
+
+    #[test]
+    fn test_descriptor_agregation() {
+        // FIXME: replace testnet with regtest integration tests
+        let client = RawClient::new("electrum.blockstream.info:60001", None).unwrap();
+        let descr: Descriptor = "pkh(xpub661MyMwAqRbcFzLgkidNP6oDUiCQetdJv6kF8VjanzJQg7BETTyLtGGMobamRALL8Mn3rpj8K564j9kZmqcf4K1wnH1sqyPQnLtfD8jdWnR/0/*)".parse().unwrap();
+
+        let balance = client.descriptor_balance(&descr, 10, 10, false).unwrap();
+        assert_eq!(balance, 1786429);
+
+        let utxos = client.descriptor_utxos(&descr, 10, 10).unwrap();
+        assert_eq!(utxos.len(), 1);
+        let (child, utxo) = utxos.into_iter().next().unwrap();
+        assert_eq!(child, ChildNumber::Normal { index: 5 });
+        assert_eq!(utxo.height, 1780775);
+        assert_eq!(
+            utxo.tx_hash,
+            "8993d11fab24458824327a83d81ba8fd7443b0e77bfebd415b121e69c49fc999"
+                .parse()
+                .unwrap()
+        );
+        assert_eq!(utxo.tx_pos, 0);
+        assert_eq!(utxo.value, 1786429);
     }
 }

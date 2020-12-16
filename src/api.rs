@@ -12,6 +12,8 @@ use batch::Batch;
 use miniscript::DescriptorPublicKey;
 use types::*;
 #[cfg(feature = "aggregation")]
+use util::Itertools;
+#[cfg(feature = "aggregation")]
 use Descriptor;
 
 /// API calls exposed by an Electrum client
@@ -78,29 +80,53 @@ pub trait ElectrumApi {
         &self,
         descriptor: &Descriptor,
         gap_limit: usize,
+        chunk_size: usize,
     ) -> Result<Vec<(ChildNumber, Script)>, Error> {
+        // Don't get stuck in an infinite loop if the descriptor only represents one script
+        if !descriptor_is_derivable(descriptor) {
+            let child_number = ChildNumber::Normal { index: 0 };
+            let ctx = miniscript::descriptor::DescriptorPublicKeyCtx::new(
+                &secp256k1::SECP256K1,
+                child_number,
+            );
+            let script = descriptor.script_pubkey(ctx);
+
+            if self.script_get_history(&script)?.is_empty() {
+                return Ok(vec![]);
+            } else {
+                return Ok(vec![(child_number, script)]);
+            }
+        }
+
         let mut gap = 0;
         let mut scripts = Vec::new();
 
-        for child in (0..).map(|c| ChildNumber::Normal { index: c }) {
-            let ctx =
-                miniscript::descriptor::DescriptorPublicKeyCtx::new(&secp256k1::SECP256K1, child);
-            let script = descriptor.script_pubkey(ctx);
+        let child_iter = (0..)
+            .map(|c| {
+                let child_number = ChildNumber::Normal { index: c };
+                let ctx = miniscript::descriptor::DescriptorPublicKeyCtx::new(
+                    &secp256k1::SECP256K1,
+                    child_number,
+                );
+                let script = descriptor.script_pubkey(ctx);
+                (child_number, script)
+            })
+            .chunk(chunk_size);
 
-            // TODO: possibly use batch mode to reduce RTT impact on runtime
-            if self.script_get_history(&script)?.is_empty() {
-                gap += 1;
-            } else {
-                scripts.push((child, script));
-            }
+        'outer: for children in child_iter {
+            let batch_response =
+                self.batch_script_get_history(children.iter().map(|(_, script)| script))?;
 
-            if gap >= gap_limit {
-                break;
-            }
+            for (child, history) in children.into_iter().zip(batch_response.into_iter()) {
+                if history.is_empty() {
+                    gap += 1;
+                } else {
+                    scripts.push(child);
+                }
 
-            // Don't get stuck in an infinite loop if the descriptor only represents one script
-            if !descriptor_is_derivable(descriptor) {
-                break;
+                if gap >= gap_limit {
+                    break 'outer;
+                }
             }
         }
 
@@ -114,16 +140,17 @@ pub trait ElectrumApi {
     ///
     /// let client = Client::new("ssl://some.electrum.server:50002", None).unwrap();
     /// let desc: Descriptor = "sh(wpkh(xpub6DP...WB/0/*))".parse().unwrap();
-    /// println!("External chain balance (sats): {}", client.descriptor_balance(desc, 10, false));
+    /// println!("External chain balance (sats): {}", client.descriptor_balance(desc, 10, 10, false));
     /// ```
     #[cfg(feature = "aggregation")]
     fn descriptor_balance(
         &self,
         descriptor: &Descriptor,
         gap_limit: usize,
+        chunk_size: usize,
         include_unconfirmed: bool,
     ) -> Result<u64, Error> {
-        let scripts = self.descriptor_used_scripts(descriptor, gap_limit)?;
+        let scripts = self.descriptor_used_scripts(descriptor, gap_limit, chunk_size)?;
         let balance = self
             .batch_script_get_balance(scripts.iter().map(|s| &s.1))?
             .iter()
@@ -145,8 +172,9 @@ pub trait ElectrumApi {
         &self,
         descriptor: &Descriptor,
         gap_limit: usize,
+        chunk_size: usize,
     ) -> Result<Vec<(ChildNumber, ListUnspentRes)>, Error> {
-        let scripts = self.descriptor_used_scripts(descriptor, gap_limit)?;
+        let scripts = self.descriptor_used_scripts(descriptor, gap_limit, chunk_size)?;
         let batch_utxos = self.batch_script_list_unspent(scripts.iter().map(|s| &s.1))?;
 
         // Flatten the returned result and attach the appropriate child numbers
@@ -282,7 +310,7 @@ pub trait ElectrumApi {
 }
 
 #[cfg(feature = "aggregation")]
-fn descriptor_is_derivable(descriptor: &Descriptor) -> bool {
+pub fn descriptor_is_derivable(descriptor: &Descriptor) -> bool {
     let mut contains_wildcard_pk = false;
     let mut contains_wildcard_pkh = false;
 
