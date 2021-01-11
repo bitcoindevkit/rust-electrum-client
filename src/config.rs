@@ -53,11 +53,11 @@ impl ConfigBuilder {
     }
 
     /// Sets the timeout
-    pub fn timeout(mut self, timeout: u8) -> Result<Self, Error> {
-        if self.config.socks5.is_some() {
+    pub fn timeout(mut self, timeout: Option<u8>) -> Result<Self, Error> {
+        if timeout.is_some() && self.config.socks5.is_some() {
             return Err(Error::BothSocksAndTimeout);
         }
-        self.config.timeout = Some(Duration::from_secs(timeout as u64));
+        self.config.timeout = timeout.map(|t| Duration::from_secs(t as u64));
         Ok(self)
     }
 
