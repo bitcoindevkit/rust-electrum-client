@@ -75,6 +75,7 @@ impl ToSocketAddrsDomain for (&str, u16) {
     }
 }
 
+#[cfg(any(feature = "default", feature = "proxy"))]
 impl ToSocketAddrsDomain for TargetAddr {
     fn domain(&self) -> Option<&str> {
         match self {
