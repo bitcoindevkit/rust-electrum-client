@@ -14,6 +14,7 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{Script, Txid};
 
 use serde::{de, Deserialize, Serialize};
+use std::sync::PoisonError;
 
 static JSONRPC_2_0: &str = "2.0";
 
@@ -362,3 +363,9 @@ impl_error!(std::io::Error, IOError);
 impl_error!(serde_json::Error, JSON);
 impl_error!(bitcoin::hashes::hex::Error, Hex);
 impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
+
+impl<T> From<std::sync::PoisonError<T>> for Error {
+    fn from(_: PoisonError<T>) -> Self {
+        Error::CouldntLockReader
+    }
+}

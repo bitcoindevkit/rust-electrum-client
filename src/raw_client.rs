@@ -452,13 +452,7 @@ impl<S: Read + Write> RawClient<S> {
                     // might have already received a response for that id, but we don't know it
                     // yet. Exiting here forces the calling code to fallback to the sender-receiver
                     // method, and it should find a message there waiting for it.
-                    if self
-                        .waiting_map
-                        .lock()
-                        .unwrap()
-                        .get(&until_message)
-                        .is_none()
-                    {
+                    if self.waiting_map.lock()?.get(&until_message).is_none() {
                         return Err(Error::CouldntLockReader);
                     }
                 }
@@ -494,7 +488,7 @@ impl<S: Read + Write> RawClient<S> {
                             );
 
                             // Remove ourselves from the "waiting map"
-                            let mut map = self.waiting_map.lock().unwrap();
+                            let mut map = self.waiting_map.lock()?;
                             map.remove(&resp_id);
 
                             // If the map is not empty, we select a random thread to become the
@@ -512,8 +506,7 @@ impl<S: Read + Write> RawClient<S> {
                             // move on
                             trace!("Reader thread received response for {}", resp_id);
 
-                            if let Some(sender) = self.waiting_map.lock().unwrap().remove(&resp_id)
-                            {
+                            if let Some(sender) = self.waiting_map.lock()?.remove(&resp_id) {
                                 sender
                                     .send(ChannelMessage::Response(resp))
                                     .expect("Unable to send the response");
@@ -556,13 +549,13 @@ impl<S: Read + Write> RawClient<S> {
         // Add our listener to the map before we send the request, to make sure we don't get a
         // reply before the receiver is added
         let (sender, receiver) = channel();
-        self.waiting_map.lock().unwrap().insert(req.id, sender);
+        self.waiting_map.lock()?.insert(req.id, sender);
 
         let mut raw = serde_json::to_vec(&req)?;
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
         raw.extend_from_slice(b"\n");
-        let mut stream = self.stream.lock().unwrap();
+        let mut stream = self.stream.lock()?;
         stream.write_all(&raw)?;
         stream.flush()?;
         drop(stream); // release the lock
@@ -574,7 +567,7 @@ impl<S: Read + Write> RawClient<S> {
             e @ Err(_) => {
                 // In case of error our sender could still be left in the map, depending on where
                 // the error happened. Just in case, try to remove it here
-                self.waiting_map.lock().unwrap().remove(&req.id);
+                self.waiting_map.lock()?.remove(&req.id);
                 return e;
             }
         };
@@ -617,14 +610,14 @@ impl<S: Read + Write> RawClient<S> {
 
     fn handle_notification(&self, method: &str, result: serde_json::Value) -> Result<(), Error> {
         match method {
-            "blockchain.headers.subscribe" => self.headers.lock().unwrap().append(
+            "blockchain.headers.subscribe" => self.headers.lock()?.append(
                 &mut serde_json::from_value::<Vec<RawHeaderNotification>>(result)?
                     .into_iter()
                     .collect(),
             ),
             "blockchain.scripthash.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
-                let mut script_notifications = self.script_notifications.lock().unwrap();
+                let mut script_notifications = self.script_notifications.lock()?;
 
                 let queue = script_notifications
                     .get_mut(&unserialized.scripthash)
@@ -668,10 +661,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             );
             missing_responses.insert(req.id);
 
-            self.waiting_map
-                .lock()
-                .unwrap()
-                .insert(req.id, sender.clone());
+            self.waiting_map.lock()?.insert(req.id, sender.clone());
 
             raw.append(&mut serde_json::to_vec(&req)?);
             raw.extend_from_slice(b"\n");
@@ -683,7 +673,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
-        let mut stream = self.stream.lock().unwrap();
+        let mut stream = self.stream.lock()?;
         stream.write_all(&raw)?;
         stream.flush()?;
         drop(stream); // release the lock
@@ -699,7 +689,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
                     // the error happened. Just in case, try to remove it here
                     warn!("got error for req_id {}: {:?}", req_id, e);
                     warn!("removing all waiting req of this batch");
-                    let mut guard = self.waiting_map.lock().unwrap();
+                    let mut guard = self.waiting_map.lock()?;
                     for req_id in missing_responses.iter() {
                         guard.remove(&req_id);
                     }
@@ -730,7 +720,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
-        Ok(self.headers.lock().unwrap().pop_front())
+        Ok(self.headers.lock()?.pop_front())
     }
 
     fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
@@ -796,7 +786,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         let script_hash = script.to_electrum_scripthash();
-        let mut script_notifications = self.script_notifications.lock().unwrap();
+        let mut script_notifications = self.script_notifications.lock()?;
 
         if script_notifications.contains_key(&script_hash) {
             return Err(Error::AlreadySubscribed(script_hash));
@@ -816,7 +806,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
-        let mut script_notifications = self.script_notifications.lock().unwrap();
+        let mut script_notifications = self.script_notifications.lock()?;
 
         if !script_notifications.contains_key(&script_hash) {
             return Err(Error::NotSubscribed(script_hash));
@@ -838,12 +828,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     fn script_pop(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
         let script_hash = script.to_electrum_scripthash();
 
-        match self
-            .script_notifications
-            .lock()
-            .unwrap()
-            .get_mut(&script_hash)
-        {
+        match self.script_notifications.lock()?.get_mut(&script_hash) {
             None => Err(Error::NotSubscribed(script_hash)),
             Some(queue) => Ok(queue.pop_front()),
         }
