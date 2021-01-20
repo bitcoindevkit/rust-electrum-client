@@ -183,5 +183,5 @@ pub trait ElectrumApi {
 
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
-    fn calls_made(&self) -> usize;
+    fn calls_made(&self) -> Result<usize, Error>;
 }

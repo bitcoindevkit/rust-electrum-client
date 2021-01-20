@@ -984,8 +984,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     #[cfg(feature = "debug-calls")]
-    fn calls_made(&self) -> usize {
-        self.calls.load(Ordering::SeqCst)
+    fn calls_made(&self) -> Result<usize, Error> {
+        Ok(self.calls.load(Ordering::SeqCst))
     }
 }
 
