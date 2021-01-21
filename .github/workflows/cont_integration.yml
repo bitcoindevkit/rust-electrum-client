@@ -30,7 +30,7 @@ jobs:
       - name: Fmt
         run: cargo fmt -- --check --verbose
       - name: Test
-        run: cargo test --verbose --all
+        run: cargo test --verbose --all-features
       - run: cargo check --verbose --features=use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy
       - run: cargo check --verbose --no-default-features --features=minimal
