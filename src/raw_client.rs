@@ -464,8 +464,7 @@ impl<S: Read + Write> RawClient<S> {
                     if let Err(e) = reader.read_line(&mut raw_resp) {
                         let error = Arc::new(e);
                         for (_, s) in self.waiting_map.lock().unwrap().drain() {
-                            s.send(ChannelMessage::Error(error.clone()))
-                                .expect("Unable to send ChannelMessage::Error");
+                            s.send(ChannelMessage::Error(error.clone()))?;
                         }
                         return Err(Error::SharedIOError(error));
                     }
@@ -494,9 +493,7 @@ impl<S: Read + Write> RawClient<S> {
                             // If the map is not empty, we select a random thread to become the
                             // new reader thread.
                             if let Some(sender) = map.values().next() {
-                                sender
-                                    .send(ChannelMessage::WakeUp)
-                                    .expect("Unable to WakeUp a different thread");
+                                sender.send(ChannelMessage::WakeUp)?;
                             }
 
                             break Ok(resp);
@@ -507,9 +504,7 @@ impl<S: Read + Write> RawClient<S> {
                             trace!("Reader thread received response for {}", resp_id);
 
                             if let Some(sender) = self.waiting_map.lock()?.remove(&resp_id) {
-                                sender
-                                    .send(ChannelMessage::Response(resp))
-                                    .expect("Unable to send the response");
+                                sender.send(ChannelMessage::Response(resp))?;
                             } else {
                                 warn!("Missing listener for {}", resp_id);
                             }
@@ -532,9 +527,7 @@ impl<S: Read + Write> RawClient<S> {
                 // running somewhere.
                 Err(Error::CouldntLockReader)
             }
-            e @ Err(TryLockError::Poisoned(_)) => e
-                .map(|_| Ok(serde_json::Value::Null))
-                .expect("Poisoned reader mutex"), // panic if the reader mutex has been poisoned
+            Err(TryLockError::Poisoned(e)) => Err(e)?,
         };
 
         let resp = resp?;
@@ -585,22 +578,21 @@ impl<S: Read + Write> RawClient<S> {
             match self._reader_thread(Some(req_id)) {
                 Ok(response) => break Ok(response),
                 Err(Error::CouldntLockReader) => {
-                    match receiver.recv() {
+                    match receiver.recv()? {
                         // Received our response, returning it
-                        Ok(ChannelMessage::Response(received)) => break Ok(received),
-                        Ok(ChannelMessage::WakeUp) => {
+                        ChannelMessage::Response(received) => break Ok(received),
+                        ChannelMessage::WakeUp => {
                             // We have been woken up, this means that we should try becoming the
                             // reader thread ourselves
                             trace!("WakeUp for {}", req_id);
 
                             continue;
                         }
-                        Ok(ChannelMessage::Error(e)) => {
+                        ChannelMessage::Error(e) => {
                             warn!("Received ChannelMessage::Error");
 
                             break Err(Error::SharedIOError(e));
                         }
-                        e @ Err(_) => e.map(|_| ()).expect("Error receiving from channel"), // panic if there's something wrong with the channels
                     }
                 }
                 e @ Err(_) => break e,

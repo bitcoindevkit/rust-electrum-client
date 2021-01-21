@@ -14,7 +14,6 @@ use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{Script, Txid};
 
 use serde::{de, Deserialize, Serialize};
-use std::sync::PoisonError;
 
 static JSONRPC_2_0: &str = "2.0";
 
@@ -301,6 +300,8 @@ pub enum Error {
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
     CouldntLockReader,
+    /// Broken IPC communication channel: the other thread probably has exited
+    Mpsc,
 
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
@@ -365,7 +366,19 @@ impl_error!(bitcoin::hashes::hex::Error, Hex);
 impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
-    fn from(_: PoisonError<T>) -> Self {
+    fn from(_: std::sync::PoisonError<T>) -> Self {
         Error::CouldntLockReader
+    }
+}
+
+impl<T> From<std::sync::mpsc::SendError<T>> for Error {
+    fn from(_: std::sync::mpsc::SendError<T>) -> Self {
+        Error::Mpsc
+    }
+}
+
+impl From<std::sync::mpsc::RecvError> for Error {
+    fn from(_: std::sync::mpsc::RecvError) -> Self {
+        Error::Mpsc
     }
 }
