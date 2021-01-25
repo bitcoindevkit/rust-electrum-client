@@ -265,7 +265,6 @@ pub struct ScriptNotification {
 
 /// Errors
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum Error {
     /// Wraps `std::io::Error`
     IOError(std::io::Error),
