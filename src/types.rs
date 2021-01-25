@@ -3,6 +3,7 @@
 //! This module contains definitions of all the complex data structures that are returned by calls
 
 use std::convert::TryFrom;
+use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -291,7 +292,7 @@ pub enum Error {
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads
     SharedIOError(Arc<std::io::Error>),
-    /// Setting both a proxy and a timeout in `Config` results in this error
+    /// Setting both a proxy and a timeout in `Config` is an error
     BothSocksAndTimeout,
     /// Setting both a timeout and passing zero or more than one socket addrs is an error
     WrongAddrsNumberWithTimeout,
@@ -308,11 +309,51 @@ pub enum Error {
     SslHandshakeError(openssl::ssl::HandshakeError<std::net::TcpStream>),
 }
 
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::IOError(e) => Display::fmt(e, f),
+            Error::JSON(e) => Display::fmt(e, f),
+            Error::Hex(e) => Display::fmt(e, f),
+            Error::Bitcoin(e) => Display::fmt(e, f),
+            Error::SharedIOError(e) => Display::fmt(e, f),
+            #[cfg(feature = "use-openssl")]
+            Error::SslHandshakeError(e) => Display::fmt(e, f),
+            #[cfg(feature = "use-openssl")]
+            Error::InvalidSslMethod(e) => Display::fmt(e, f),
+
+            Error::Message(e) => f.write_str(e),
+            Error::InvalidDNSNameError(domain) => write!(f, "Invalid domain name {} not matching SSL certificate", domain),
+            Error::AllAttemptsErrored(errors) => {
+                f.write_str("Made one or multiple attempts, all errored:\n")?;
+                for err in errors {
+                    writeln!(f, "\t- {}", err)?;
+                }
+                Ok(())
+            }
+
+            Error::Protocol(e) => write!(f, "Electrum server error: {}", e.clone().take()),
+            Error::InvalidResponse(e) => write!(f, "Error during the deserialization of a response from the server: {}", e.clone().take()),
+
+            // TODO: Print out addresses once `ScriptHash` will implement `Display`
+            Error::AlreadySubscribed(_) => write!(f, "Already subscribed to the notifications of an address"),
+            Error::NotSubscribed(_) => write!(f, "Not subscribed to the notifications of an address"),
+
+            Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
+            Error::BothSocksAndTimeout => f.write_str("Setting both a proxy and a timeout in `Config` is an error"),
+            Error::WrongAddrsNumberWithTimeout => f.write_str("Setting both a timeout and passing zero or more than one socket addrs is an error"),
+            Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
 macro_rules! impl_error {
     ( $from:ty, $to:ident ) => {
         impl std::convert::From<$from> for Error {
             fn from(err: $from) -> Self {
-                Error::$to(err)
+                Error::$to(err.into())
             }
         }
     };
