@@ -54,7 +54,7 @@ macro_rules! impl_inner_call {
                 Err(e) => {
                     warn!("call retry:{}/{} {:?}", errors.len() + 1 , $self.config.retry(), e);
                     errors.push(e);
-                    if errors.len() as u8 == $self.config.retry() {
+                    if errors.len() as u8 > $self.config.retry() {
                         return Err(Error::AllAttemptsErrored(errors));
                     }
 
