@@ -52,11 +52,16 @@ macro_rules! impl_inner_call {
                     return res;
                 },
                 Err(e) => {
-                    warn!("call retry:{}/{} {:?}", errors.len() + 1 , $self.config.retry(), e);
-                    errors.push(e);
-                    if errors.len() as u8 > $self.config.retry() {
+                    let failed_attempts = (errors.len() + 1) as u8;
+
+                    if failed_attempts > $self.config.retry() {
+                        warn!("call '{}' failed after {} attempts", stringify!($name), failed_attempts);
                         return Err(Error::AllAttemptsErrored(errors));
                     }
+
+                    warn!("call '{}' failed with {}, retry: {}/{}", stringify!($name), e, failed_attempts, $self.config.retry());
+
+                    errors.push(e);
 
                     // Only one thread will try to recreate the client getting the write lock,
                     // other eventual threads will get Err and will block at the beginning of
