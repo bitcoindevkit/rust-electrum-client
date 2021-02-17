@@ -10,6 +10,7 @@ use api::ElectrumApi;
 use batch::Batch;
 use config::Config;
 use raw_client::*;
+use std::convert::TryFrom;
 use types::*;
 
 /// Generalized Electrum client that supports multiple backends. This wraps
@@ -52,9 +53,9 @@ macro_rules! impl_inner_call {
                     return res;
                 },
                 Err(e) => {
-                    let failed_attempts = (errors.len() + 1) as u8;
+                    let failed_attempts = errors.len() + 1;
 
-                    if failed_attempts > $self.config.retry() {
+                    if retries_exhausted(failed_attempts, $self.config.retry()) {
                         warn!("call '{}' failed after {} attempts", stringify!($name), failed_attempts);
                         return Err(Error::AllAttemptsErrored(errors));
                     }
@@ -88,6 +89,13 @@ macro_rules! impl_inner_call {
                 },
             }
         }}
+    }
+}
+
+fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
+    match u8::try_from(failed_attempts) {
+        Ok(failed_attempts) => failed_attempts > configured_retries,
+        Err(_) => true, // if the usize doesn't fit into a u8, we definitely exhausted our retries
     }
 }
 
@@ -292,5 +300,40 @@ impl ElectrumApi for Client {
     #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         impl_inner_call!(self, calls_made)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_failed_attempts_than_retries_means_exhausted() {
+        let exhausted = retries_exhausted(10, 5);
+
+        assert_eq!(exhausted, true)
+    }
+
+    #[test]
+    fn failed_attempts_bigger_than_u8_means_exhausted() {
+        let failed_attempts = u8::MAX as usize + 1;
+
+        let exhausted = retries_exhausted(failed_attempts, u8::MAX);
+
+        assert_eq!(exhausted, true)
+    }
+
+    #[test]
+    fn less_failed_attempts_means_not_exhausted() {
+        let exhausted = retries_exhausted(2, 5);
+
+        assert_eq!(exhausted, false)
+    }
+
+    #[test]
+    fn attempts_equals_retries_means_not_exhausted_yet() {
+        let exhausted = retries_exhausted(2, 2);
+
+        assert_eq!(exhausted, false)
     }
 }
