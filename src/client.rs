@@ -77,11 +77,16 @@ macro_rules! impl_inner_call {
                                     break;
                                 },
                                 Err(e) => {
-                                    warn!("client retry:{}/{} {:?}", errors.len() + 1, $self.config.retry(), e);
-                                    errors.push(e);
-                                    if errors.len() as u8 == $self.config.retry() {
+                                    let failed_attempts = errors.len() + 1;
+
+                                    if retries_exhausted(failed_attempts, $self.config.retry()) {
+                                        warn!("re-creating client failed after {} attempts", failed_attempts);
                                         return Err(Error::AllAttemptsErrored(errors));
                                     }
+
+                                    warn!("re-creating client failed with {}, retry: {}/{}", e, failed_attempts, $self.config.retry());
+
+                                    errors.push(e);
                                 }
                             }
                         }
