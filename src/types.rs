@@ -344,6 +344,7 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::BothSocksAndTimeout => f.write_str("Setting both a proxy and a timeout in `Config` is an error"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
+            Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
         }
     }
 }
@@ -367,7 +368,7 @@ impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(_: std::sync::PoisonError<T>) -> Self {
-        Error::CouldntLockReader
+        Error::IOError(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 }
 

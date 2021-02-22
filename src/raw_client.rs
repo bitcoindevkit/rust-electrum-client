@@ -492,8 +492,17 @@ impl<S: Read + Write> RawClient<S> {
 
                             // If the map is not empty, we select a random thread to become the
                             // new reader thread.
-                            if let Some(sender) = map.values().next() {
-                                sender.send(ChannelMessage::WakeUp)?;
+                            if let Some(err) = map.values().find_map(|sender| {
+                                sender
+                                    .send(ChannelMessage::WakeUp)
+                                    .map_err(|err| {
+                                        warn!("Unable to wake up a thread, trying some other");
+                                        err
+                                    })
+                                    .err()
+                            }) {
+                                error!("All the threads has failed, giving up");
+                                return Err(err)?;
                             }
 
                             break Ok(resp);
