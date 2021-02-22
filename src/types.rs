@@ -296,8 +296,6 @@ pub enum Error {
     SharedIOError(Arc<std::io::Error>),
     /// Setting both a proxy and a timeout in `Config` is an error
     BothSocksAndTimeout,
-    /// Setting both a timeout and passing zero or more than one socket addrs is an error
-    WrongAddrsNumberWithTimeout,
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
@@ -343,7 +341,6 @@ impl Display for Error {
 
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::BothSocksAndTimeout => f.write_str("Setting both a proxy and a timeout in `Config` is an error"),
-            Error::WrongAddrsNumberWithTimeout => f.write_str("Setting both a timeout and passing zero or more than one socket addrs is an error"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
         }
     }
