@@ -10,6 +10,7 @@ use api::ElectrumApi;
 use batch::Batch;
 use config::Config;
 use raw_client::*;
+use std::convert::TryFrom;
 use types::*;
 
 /// Generalized Electrum client that supports multiple backends. This wraps
@@ -52,11 +53,16 @@ macro_rules! impl_inner_call {
                     return res;
                 },
                 Err(e) => {
-                    warn!("call retry:{}/{} {:?}", errors.len() + 1 , $self.config.retry(), e);
-                    errors.push(e);
-                    if errors.len() as u8 == $self.config.retry() {
+                    let failed_attempts = errors.len() + 1;
+
+                    if retries_exhausted(failed_attempts, $self.config.retry()) {
+                        warn!("call '{}' failed after {} attempts", stringify!($name), failed_attempts);
                         return Err(Error::AllAttemptsErrored(errors));
                     }
+
+                    warn!("call '{}' failed with {}, retry: {}/{}", stringify!($name), e, failed_attempts, $self.config.retry());
+
+                    errors.push(e);
 
                     // Only one thread will try to recreate the client getting the write lock,
                     // other eventual threads will get Err and will block at the beginning of
@@ -71,11 +77,16 @@ macro_rules! impl_inner_call {
                                     break;
                                 },
                                 Err(e) => {
-                                    warn!("client retry:{}/{} {:?}", errors.len() + 1, $self.config.retry(), e);
-                                    errors.push(e);
-                                    if errors.len() as u8 == $self.config.retry() {
+                                    let failed_attempts = errors.len() + 1;
+
+                                    if retries_exhausted(failed_attempts, $self.config.retry()) {
+                                        warn!("re-creating client failed after {} attempts", failed_attempts);
                                         return Err(Error::AllAttemptsErrored(errors));
                                     }
+
+                                    warn!("re-creating client failed with {}, retry: {}/{}", e, failed_attempts, $self.config.retry());
+
+                                    errors.push(e);
                                 }
                             }
                         }
@@ -83,6 +94,13 @@ macro_rules! impl_inner_call {
                 },
             }
         }}
+    }
+}
+
+fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
+    match u8::try_from(failed_attempts) {
+        Ok(failed_attempts) => failed_attempts > configured_retries,
+        Err(_) => true, // if the usize doesn't fit into a u8, we definitely exhausted our retries
     }
 }
 
@@ -287,5 +305,40 @@ impl ElectrumApi for Client {
     #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         impl_inner_call!(self, calls_made)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn more_failed_attempts_than_retries_means_exhausted() {
+        let exhausted = retries_exhausted(10, 5);
+
+        assert_eq!(exhausted, true)
+    }
+
+    #[test]
+    fn failed_attempts_bigger_than_u8_means_exhausted() {
+        let failed_attempts = u8::MAX as usize + 1;
+
+        let exhausted = retries_exhausted(failed_attempts, u8::MAX);
+
+        assert_eq!(exhausted, true)
+    }
+
+    #[test]
+    fn less_failed_attempts_means_not_exhausted() {
+        let exhausted = retries_exhausted(2, 5);
+
+        assert_eq!(exhausted, false)
+    }
+
+    #[test]
+    fn attempts_equals_retries_means_not_exhausted_yet() {
+        let exhausted = retries_exhausted(2, 2);
+
+        assert_eq!(exhausted, false)
     }
 }
