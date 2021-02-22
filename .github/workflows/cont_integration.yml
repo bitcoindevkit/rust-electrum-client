@@ -31,6 +31,10 @@ jobs:
         run: cargo fmt -- --check --verbose
       - name: Test
         run: cargo test --verbose --all-features
+      - name: Setup iptables for the timeout test
+        run: sudo ip6tables -I INPUT 1 -p tcp -d ::1 --dport 60000 -j DROP
+      - name: Timeout test
+        run: cargo test -- --ignored test_local_timeout
       - run: cargo check --verbose --features=use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy
       - run: cargo check --verbose --no-default-features --features=minimal

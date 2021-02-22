@@ -341,4 +341,55 @@ mod tests {
 
         assert_eq!(exhausted, false)
     }
+
+    #[test]
+    #[ignore]
+    fn test_local_timeout() {
+        // This test assumes a couple things:
+        // - that `localhost` is resolved to two IP addresses, `127.0.0.1` and `::1` (with the v6
+        //   one having higher priority)
+        // - that the system silently drops packets to `[::1]:60000` or a different port if
+        //   specified through `TEST_ELECTRUM_TIMEOUT_PORT`
+        //
+        //   this can be setup with: ip6tables -I INPUT 1 -p tcp -d ::1 --dport 60000 -j DROP
+        //   and removed with:       ip6tables -D INPUT -p tcp -d ::1 --dport 60000 -j DROP
+        //
+        // The test tries to create a client to `localhost` and expects it to succeed, but only
+        // after at least 2 seconds have passed which is roughly the timeout time for the first
+        // try.
+
+        use std::net::TcpListener;
+        use std::sync::mpsc::channel;
+        use std::time::{Duration, Instant};
+
+        let endpoint =
+            std::env::var("TEST_ELECTRUM_TIMEOUT_PORT").unwrap_or("localhost:60000".into());
+        let (sender, receiver) = channel();
+
+        std::thread::spawn(move || {
+            let listener = TcpListener::bind("127.0.0.1:60000").unwrap();
+            sender.send(()).unwrap();
+
+            for _stream in listener.incoming() {
+                loop {}
+            }
+        });
+
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("Can't start local listener");
+
+        let now = Instant::now();
+        let client = Client::from_config(
+            &endpoint,
+            crate::config::ConfigBuilder::new()
+                .timeout(Some(5))
+                .unwrap()
+                .build(),
+        );
+        let elapsed = now.elapsed();
+
+        assert!(client.is_ok());
+        assert!(elapsed > Duration::from_secs(2));
+    }
 }
