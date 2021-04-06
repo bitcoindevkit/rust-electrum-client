@@ -2,7 +2,7 @@
 //!
 //! This module contains the definition of the raw client that wraps the transport method
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -647,8 +647,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
 
-        let mut missing_responses = HashSet::new();
-        let mut answer = Vec::new();
+        let mut missing_responses = BTreeSet::new();
+        let mut answers = BTreeMap::new();
 
         // Add our listener to the map before we send the request, Here we will clone the sender
         // for every request id, so that we only have to monitor one receiver.
@@ -681,10 +681,12 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         self.increment_calls();
 
-        while !missing_responses.is_empty() {
-            let req_id = *missing_responses.iter().next().unwrap();
-            let resp = match self.recv(&receiver, req_id) {
-                Ok(resp) => resp,
+        for req_id in missing_responses.iter() {
+            match self.recv(&receiver, *req_id) {
+                Ok(mut resp) => answers.insert(
+                    resp["id"].as_u64().unwrap_or_default(),
+                    resp["result"].take(),
+                ),
                 Err(e) => {
                     // In case of error our sender could still be left in the map, depending on where
                     // the error happened. Just in case, try to remove it here
@@ -692,21 +694,14 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
                     warn!("removing all waiting req of this batch");
                     let mut guard = self.waiting_map.lock()?;
                     for req_id in missing_responses.iter() {
-                        guard.remove(&req_id);
+                        guard.remove(req_id);
                     }
                     return Err(e);
                 }
             };
-            let resp_id = resp["id"].as_u64().unwrap() as usize;
-
-            missing_responses.remove(&resp_id);
-            answer.push(resp);
         }
 
-        answer.sort_by(|a, b| a["id"].as_u64().partial_cmp(&b["id"].as_u64()).unwrap());
-        let answer = answer.into_iter().map(|mut x| x["result"].take()).collect();
-
-        Ok(answer)
+        Ok(answers.into_iter().map(|(_, r)| r).collect())
     }
 
     fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
