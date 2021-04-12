@@ -683,10 +683,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         for req_id in missing_responses.iter() {
             match self.recv(&receiver, *req_id) {
-                Ok(mut resp) => answers.insert(
-                    resp["id"].as_u64().unwrap_or_default(),
-                    resp["result"].take(),
-                ),
+                Ok(mut resp) => answers.insert(req_id, resp["result"].take()),
                 Err(e) => {
                     // In case of error our sender could still be left in the map, depending on where
                     // the error happened. Just in case, try to remove it here
