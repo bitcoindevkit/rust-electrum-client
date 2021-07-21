@@ -33,6 +33,9 @@ pub trait ElectrumApi {
         Ok(deserialize(&self.transaction_get_raw(txid)?)?)
     }
 
+    /// Gets the verbose transaction with `txid`. Returns an error if not found.
+    fn transaction_get_verbose(&self, txid: &Txid) -> Result<GetTransactionVerboseRes, Error>;
+
     /// Batch version of [`transaction_get`](#method.transaction_get).
     ///
     /// Takes a list of `txids` and returns a list of transactions.

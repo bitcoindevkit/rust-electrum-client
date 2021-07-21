@@ -891,6 +891,18 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
 
+    fn transaction_get_verbose(&self, txid: &Txid) -> Result<GetTransactionVerboseRes, Error> {
+        let params = vec![Param::String(txid.to_hex()), Param::Bool(true)];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.get",
+            params,
+        );
+        let result = self.call(req)?;
+        let res = serde_json::from_value(result).unwrap();
+        Ok(res)
+    }
+
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         let params = vec![Param::String(txid.to_hex())];
         let req = Request::new_id(
@@ -1164,6 +1176,27 @@ mod test {
             .unwrap();
         assert_eq!(resp.version, 1);
         assert_eq!(resp.lock_time, 0);
+    }
+
+    #[test]
+    fn test_transaction_get_verbose() {
+        use bitcoin::hashes::hex::FromHex;
+        use bitcoin::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.transaction_get_verbose(
+            &Txid::from_hex("5b867a8468518450d78a4f60dc21e11248db87ceb3eeec634e7c5af7e8b909a1")
+                .unwrap(),
+        );
+
+        match resp {
+            Err(e) => assert_eq!(
+                e.to_string(),
+                "Electrum server error: \"verbose transactions are currently unsupported\"",
+            ),
+            Ok(v) => assert_eq!(v.time.unwrap(), 1626901917),
+        }
     }
 
     #[test]

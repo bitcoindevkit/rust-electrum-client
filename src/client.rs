@@ -253,6 +253,11 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn transaction_get_verbose(&self, txid: &Txid) -> Result<GetTransactionVerboseRes, Error> {
+        impl_inner_call!(self, transaction_get_verbose, txid)
+    }
+
+    #[inline]
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
         impl_inner_call!(self, transaction_get_raw, txid)
     }

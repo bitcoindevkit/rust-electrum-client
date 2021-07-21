@@ -2,6 +2,7 @@
 //!
 //! This module contains definitions of all the complex data structures that are returned by calls
 
+use bitcoin::BlockHash;
 use std::convert::TryFrom;
 use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
@@ -211,6 +212,40 @@ pub struct GetBalanceRes {
     ///
     /// Some servers (e.g. `electrs`) return this as a negative value.
     pub unconfirmed: i64,
+}
+
+// TODO: Implement transaction serialization for inputs and outputs, for
+// example with pub vin: Vec<TxIn> and pub vout: Vec<TxOut>
+
+/// Response to a [`transaction_get`](../client/struct.Client.html#method.transaction_get) request
+/// with the verbose true flag set
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct GetTransactionVerboseRes {
+    /// Block hash of the block containing the transaction.
+    #[serde(default)]
+    pub blockhash: Option<BlockHash>,
+    /// Block time of the block containing the transaction.
+    #[serde(default)]
+    pub blocktime: Option<u32>,
+    /// Confirmations of the transaction
+    #[serde(default)]
+    pub confirmations: Option<u32>,
+    /// Same as blocktime
+    #[serde(default)]
+    pub time: Option<u32>,
+    /// The transaction hash (differs from txid for witness transactions)
+    pub hash: Txid,
+    /// The serialized, hex-encoded data for 'txid'
+    pub hex: String,
+    /// nLocktime of the transaction
+    pub locktime: u32,
+    /// Size of the serialized transaction
+    pub size: usize,
+    /// Id of the transaction
+    pub txid: Txid,
+    /// Version of the transaction
+    pub version: i32,
 }
 
 /// Response to a [`transaction_get_merkle`](../client/struct.Client.html#method.transaction_get_merkle) request.
