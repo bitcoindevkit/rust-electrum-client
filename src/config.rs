@@ -5,16 +5,19 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Proxy socks5 configuration, default None
+    #[cfg(feature = "proxy")]
     socks5: Option<Socks5Config>,
     /// timeout in seconds, default None (depends on TcpStream default)
     timeout: Option<Duration>,
     /// number of retry if any error, default 1
     retry: u8,
     /// when ssl, validate the domain, default true
+    #[cfg(any(feature = "openssl", feature = "rustls"))]
     validate_domain: bool,
 }
 
 /// Configuration for Socks5
+#[cfg(feature = "proxy")]
 #[derive(Debug, Clone)]
 pub struct Socks5Config {
     /// The address of the socks5 service
@@ -24,6 +27,7 @@ pub struct Socks5Config {
 }
 
 /// Credential for the proxy
+#[cfg(feature = "proxy")]
 #[derive(Debug, Clone)]
 pub struct Socks5Credential {
     pub username: String,
@@ -45,6 +49,7 @@ impl ConfigBuilder {
 
     /// Set the socks5 config if Some, it accept an `Option` because it's easier for the caller to use
     /// in a method chain
+    #[cfg(feature = "proxy")]
     pub fn socks5(mut self, socks5_config: Option<Socks5Config>) -> Result<Self, Error> {
         if socks5_config.is_some() && self.config.timeout.is_some() {
             return Err(Error::BothSocksAndTimeout);
@@ -55,8 +60,11 @@ impl ConfigBuilder {
 
     /// Sets the timeout
     pub fn timeout(mut self, timeout: Option<u8>) -> Result<Self, Error> {
-        if timeout.is_some() && self.config.socks5.is_some() {
-            return Err(Error::BothSocksAndTimeout);
+        #[cfg(feature = "proxy")]
+        {
+            if timeout.is_some() && self.config.socks5.is_some() {
+                return Err(Error::BothSocksAndTimeout);
+            }
         }
         self.config.timeout = timeout.map(|t| Duration::from_secs(t as u64));
         Ok(self)
@@ -69,6 +77,7 @@ impl ConfigBuilder {
     }
 
     /// Sets if the domain has to be validated
+    #[cfg(any(feature = "openssl", feature = "rustls"))]
     pub fn validate_domain(mut self, validate_domain: bool) -> Self {
         self.config.validate_domain = validate_domain;
         self
@@ -86,6 +95,7 @@ impl Default for ConfigBuilder {
     }
 }
 
+#[cfg(feature = "proxy")]
 impl Socks5Config {
     /// Socks5Config constructor without credentials
     pub fn new(addr: impl ToString) -> Self {
@@ -106,6 +116,7 @@ impl Socks5Config {
 
 impl Config {
     /// Get the socks5 config option.
+    #[cfg(feature = "proxy")]
     pub fn socks5(&self) -> &Option<Socks5Config> {
         &self.socks5
     }
@@ -121,6 +132,7 @@ impl Config {
     }
 
     /// Get the validate_domain config option.
+    #[cfg(any(feature = "openssl", feature = "rustls"))]
     pub fn validate_domain(&self) -> bool {
         self.validate_domain
     }
@@ -129,9 +141,11 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            #[cfg(feature = "proxy")]
             socks5: None,
             timeout: None,
             retry: 1,
+            #[cfg(any(feature = "openssl", feature = "rustls"))]
             validate_domain: true,
         }
     }

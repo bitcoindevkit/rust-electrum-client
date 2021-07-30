@@ -302,6 +302,8 @@ pub enum Error {
     CouldntLockReader,
     /// Broken IPC communication channel: the other thread probably has exited
     Mpsc,
+    /// SSL support requires feature `use-openssl` or `use-rustls`.
+    SslSupportNotConfigured,
 
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
@@ -345,6 +347,7 @@ impl Display for Error {
             Error::BothSocksAndTimeout => f.write_str("Setting both a proxy and a timeout in `Config` is an error"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            Error::SslSupportNotConfigured => f.write_str("SSL support not configured, requires feature `use-openssl` or `use-rustls`"),
         }
     }
 }

@@ -8,7 +8,7 @@ use bitcoin::{Script, Txid};
 
 use api::ElectrumApi;
 use batch::Batch;
-use config::Config;
+use config::{Config, ConfigBuilder};
 use raw_client::*;
 use std::convert::TryFrom;
 use types::*;
@@ -16,14 +16,14 @@ use types::*;
 /// Generalized Electrum client that supports multiple backends. This wraps
 /// [`RawClient`](client/struct.RawClient.html) and provides a more user-friendly
 /// constructor that can choose the right backend based on the url prefix.
-///
-/// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
 pub enum ClientType {
-    #[allow(missing_docs)]
+    /// TCP stream client.
     TCP(RawClient<ElectrumPlaintextStream>),
-    #[allow(missing_docs)]
+    /// SSL stream client.
+    #[cfg(any(feature = "openssl", feature = "rustls"))]
     SSL(RawClient<ElectrumSslStream>),
-    #[allow(missing_docs)]
+    /// Socks5 proxy client (either SSL or TCP).
+    #[cfg(feature = "proxy")]
     Socks5(RawClient<ElectrumProxyStream>),
 }
 
@@ -43,7 +43,9 @@ macro_rules! impl_inner_call {
             let read_client = $self.client_type.read().unwrap();
             let res = match &*read_client {
                 ClientType::TCP(inner) => inner.$name( $($args, )* ),
+                #[cfg(any(feature = "openssl", feature = "rustls"))]
                 ClientType::SSL(inner) => inner.$name( $($args, )* ),
+                #[cfg(feature = "proxy")]
                 ClientType::Socks5(inner) => inner.$name( $($args, )* ),
             };
             drop(read_client);
@@ -106,28 +108,48 @@ fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
 
 impl ClientType {
     /// Constructor that supports multiple backends and allows configuration through
-    /// the [Config]
+    /// the [Config]. SSL must be explicit in URL, we default to TCP.
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
-        if url.starts_with("ssl://") {
-            let url = url.replacen("ssl://", "", 1);
-            let client = match config.socks5() {
-                Some(socks5) => {
-                    RawClient::new_proxy_ssl(url.as_str(), config.validate_domain(), socks5)?
-                }
-                None => {
-                    RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
-                }
-            };
-
-            Ok(ClientType::SSL(client))
-        } else {
-            let url = url.replacen("tcp://", "", 1);
-
-            Ok(match config.socks5().as_ref() {
-                None => ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?),
-                Some(socks5) => ClientType::Socks5(RawClient::new_proxy(url.as_str(), socks5)?),
-            })
+        #[cfg(any(feature = "openssl", feature = "rustls"))]
+        {
+            if url.starts_with("ssl://") {
+                return ClientType::from_config_ssl(url, config);
+            }
         }
+
+        let url = url.replacen("tcp://", "", 1);
+
+        #[cfg(feature = "proxy")]
+        {
+            if let Some(socks5) = config.socks5().as_ref() {
+                return Ok(ClientType::Socks5(RawClient::new_proxy(
+                    url.as_str(),
+                    socks5,
+                )?));
+            }
+        }
+
+        Ok(ClientType::TCP(RawClient::new(
+            url.as_str(),
+            config.timeout(),
+        )?))
+    }
+
+    #[cfg(any(feature = "openssl", feature = "rustls"))]
+    fn from_config_ssl(url: &str, config: &Config) -> Result<Self, Error> {
+        let url = url.replacen("ssl://", "", 1);
+
+        #[cfg(feature = "proxy")]
+        {
+            if let Some(socks5) = config.socks5().as_ref() {
+                let client =
+                    RawClient::new_proxy_ssl(url.as_str(), config.validate_domain(), socks5)?;
+                return Ok(ClientType::SSL(client));
+            }
+        }
+
+        let client = RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
+        Ok(ClientType::SSL(client))
     }
 }
 
@@ -156,6 +178,16 @@ impl Client {
             config,
             url: url.to_string(),
         })
+    }
+
+    /// Construct a TCP client from `stream`.
+    pub fn tcp(stream: ElectrumPlaintextStream) -> Self {
+        let raw_client = RawClient::from(stream);
+        Client {
+            client_type: RwLock::new(ClientType::TCP(raw_client)),
+            config: ConfigBuilder::new().retry(0).build(),
+            url: "never used because retry==0".to_string(),
+        }
     }
 }
 
@@ -391,5 +423,13 @@ mod tests {
 
         assert!(client.is_ok());
         assert!(elapsed > Duration::from_secs(2));
+    }
+
+    #[test]
+    fn tcp_client_from_stream() {
+        let url = "electrum.blockstream.info:50001";
+        let stream =
+            std::net::TcpStream::connect(url).expect(&format!("Failed to connect to {}", url));
+        let _ = Client::tcp(stream);
     }
 }
