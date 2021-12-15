@@ -72,7 +72,7 @@ macro_rules! impl_inner_call {
                             std::thread::sleep(std::time::Duration::from_secs((1 << errors.len()).min(30) as u64));
                             match ClientType::from_config(&$self.url, &$self.config) {
                                 Ok(new_client) => {
-                                    info!("Succesfully created new client");
+                                    info!("Successfully created new client");
                                     *write_client = new_client;
                                     break;
                                 },
