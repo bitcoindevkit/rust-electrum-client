@@ -392,4 +392,37 @@ mod tests {
         assert!(client.is_ok());
         assert!(elapsed > Duration::from_secs(2));
     }
+
+    #[test]
+    fn test_timeout() {
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap(); // 0 means the OS choose a free port
+        let endpoint = format!("{}", listener.local_addr().unwrap());
+
+        let (s, r) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            // emulate an electrum server socket not replying for 30 seconds
+            s.send(());
+            let (mut s, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_secs(30));
+        });
+        // ensure the above thread is started
+        r.recv_timeout(Duration::from_secs(1)).unwrap();
+        let client = Client::from_config(
+            &endpoint,
+            crate::config::ConfigBuilder::new()
+                .timeout(Some(1))
+                .unwrap()
+                .build(),
+        )
+        .unwrap();
+        let now = Instant::now();
+        let _ = client.ping();
+        assert!(
+            now.elapsed().as_secs() <= 5,
+            "much more than timeout time passed",
+        );
+    }
 }
