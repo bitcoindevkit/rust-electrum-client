@@ -3,6 +3,7 @@
 //! This module contains the definition of the raw client that wraps the transport method
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::convert::TryFrom;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -24,7 +25,9 @@ use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
     any(feature = "default", feature = "use-rustls"),
     not(feature = "use-openssl")
 ))]
-use rustls::{ClientConfig, ClientSession, StreamOwned};
+use rustls::{
+    ClientConfig, ClientConnection, OwnedTrustAnchor, RootCertStore, ServerName, StreamOwned,
+};
 
 #[cfg(any(feature = "default", feature = "proxy"))]
 use socks::{Socks5Stream, TargetAddr, ToTargetAddr};
@@ -277,19 +280,23 @@ impl RawClient<ElectrumSslStream> {
 ))]
 mod danger {
     use rustls;
-    use webpki;
+    use rustls::client::ServerCertVerified;
+    use rustls::{Certificate, Error, ServerName};
+    use std::time::SystemTime;
 
     pub struct NoCertificateVerification {}
 
-    impl rustls::ServerCertVerifier for NoCertificateVerification {
+    impl rustls::client::ServerCertVerifier for NoCertificateVerification {
         fn verify_server_cert(
             &self,
-            _roots: &rustls::RootCertStore,
-            _presented_certs: &[rustls::Certificate],
-            _dns_name: webpki::DNSNameRef<'_>,
-            _ocsp: &[u8],
-        ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-            Ok(rustls::ServerCertVerified::assertion())
+            _end_entity: &Certificate,
+            _intermediates: &[Certificate],
+            _server_name: &ServerName,
+            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _ocsp_response: &[u8],
+            _now: SystemTime,
+        ) -> Result<ServerCertVerified, Error> {
+            Ok(ServerCertVerified::assertion())
         }
     }
 }
@@ -299,7 +306,7 @@ mod danger {
     not(feature = "use-openssl")
 ))]
 /// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
-pub type ElectrumSslStream = StreamOwned<ClientSession, TcpStream>;
+pub type ElectrumSslStream = StreamOwned<ClientConnection, TcpStream>;
 #[cfg(all(
     any(feature = "default", feature = "use-rustls"),
     not(feature = "use-openssl")
@@ -341,26 +348,37 @@ impl RawClient<ElectrumSslStream> {
         validate_domain: bool,
         tcp_stream: TcpStream,
     ) -> Result<Self, Error> {
-        let mut config = ClientConfig::new();
-        if validate_domain {
+        let builder = ClientConfig::builder().with_safe_defaults();
+
+        let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
+            let mut store = RootCertStore::empty();
+            store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.into_iter().map(|t| {
+                OwnedTrustAnchor::from_subject_spki_name_constraints(
+                    t.subject,
+                    t.spki,
+                    t.name_constraints,
+                )
+            }));
+
             // TODO: cert pinning
-            config
-                .root_store
-                .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+            builder.with_root_certificates(store).with_no_client_auth()
         } else {
-            config
-                .dangerous()
-                .set_certificate_verifier(std::sync::Arc::new(danger::NoCertificateVerification {}))
-        }
+            builder
+                .with_custom_certificate_verifier(std::sync::Arc::new(
+                    danger::NoCertificateVerification {},
+                ))
+                .with_no_client_auth()
+        };
 
         let domain = socket_addr.domain().unwrap_or("NONE").to_string();
-        let session = ClientSession::new(
-            &std::sync::Arc::new(config),
-            webpki::DNSNameRef::try_from_ascii_str(&domain)
+        let session = ClientConnection::new(
+            std::sync::Arc::new(config),
+            ServerName::try_from(domain.as_str())
                 .map_err(|_| Error::InvalidDNSNameError(domain.clone()))?,
-        );
+        )
+        .map_err(Error::CouldNotCreateConnection)?;
         let stream = StreamOwned::new(session, tcp_stream);
 
         Ok(stream.into())

@@ -303,6 +303,10 @@ pub enum Error {
     /// Broken IPC communication channel: the other thread probably has exited
     Mpsc,
 
+    #[cfg(feature = "use-rustls")]
+    /// Could not create a rustls client connection
+    CouldNotCreateConnection(rustls::Error),
+
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
     InvalidSslMethod(openssl::error::ErrorStack),
@@ -323,6 +327,8 @@ impl Display for Error {
             Error::SslHandshakeError(e) => Display::fmt(e, f),
             #[cfg(feature = "use-openssl")]
             Error::InvalidSslMethod(e) => Display::fmt(e, f),
+            #[cfg(feature = "use-rustls")]
+            Error::CouldNotCreateConnection(e) => Display::fmt(e, f),
 
             Error::Message(e) => f.write_str(e),
             Error::InvalidDNSNameError(domain) => write!(f, "Invalid domain name {} not matching SSL certificate", domain),
