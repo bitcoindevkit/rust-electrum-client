@@ -486,7 +486,11 @@ impl<S: Read + Write> RawClient<S> {
                         }
                         return Err(Error::SharedIOError(error));
                     }
-                    trace!("<== {}", raw_resp);
+                    trace!("<== {:?}", raw_resp);
+
+                    if raw_resp.is_empty() {
+                        continue;
+                    }
 
                     let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
 
