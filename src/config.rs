@@ -116,6 +116,10 @@ impl Config {
     pub fn validate_domain(&self) -> bool {
         self.validate_domain
     }
+
+    pub fn builder() -> ConfigBuilder {
+        ConfigBuilder::new()
+    }
 }
 
 impl Default for Config {
