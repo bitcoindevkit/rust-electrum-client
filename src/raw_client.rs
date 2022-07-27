@@ -666,6 +666,17 @@ impl<S: Read + Write> RawClient<S> {
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
+    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error> {
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            &call.0,
+            call.1.to_vec(),
+        );
+        let result = self.call(req)?;
+
+        Ok(result)
+    }
+
     fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
 
@@ -1282,5 +1293,36 @@ mod test {
 
         assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
         assert!(client.server_features().is_ok());
+    }
+
+    #[test]
+    fn test_raw_call() {
+        use types::Param;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let params = vec![
+            Param::String(
+                "cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566".to_string(),
+            ),
+            Param::Bool(false),
+        ];
+        let call = ("blockchain.transaction.get".to_string(), params);
+
+        let resp = client.raw_call(&call).unwrap();
+
+        assert_eq!(
+            resp,
+            "01000000000101000000000000000000000000000000000000000000000000000\
+            0000000000000ffffffff5403f09c091b4d696e656420627920416e74506f6f6c3\
+            13139ae006f20074d6528fabe6d6d2ab1948d50b3d991e2a0821df74358ed9c255\
+            3af00c7a61f97771ca0acee106e0400000000000000cbec00802461f905fffffff\
+            f0354ceac2a000000001976a91411dbe48cc6b617f9c6adaf4d9ed5f625b1c7cb5\
+            988ac0000000000000000266a24aa21a9ed2e578bce2ca6c6bc9359377345d8e98\
+            5dd5f90c78421ffa6efa5eb60428e698c0000000000000000266a24b9e11b6d2f6\
+            21d7ec3f45a5eca89d3ea6a294cdf3a042e973009584470a12916111e2caa01200\
+            000000000000000000000000000000000000000000000000000000000000000000\
+            00000"
+        )
     }
 }

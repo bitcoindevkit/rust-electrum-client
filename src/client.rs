@@ -161,6 +161,11 @@ impl Client {
 
 impl ElectrumApi for Client {
     #[inline]
+    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error> {
+        impl_inner_call!(self, raw_call, call)
+    }
+
+    #[inline]
     fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         impl_inner_call!(self, batch_call, batch)
     }
