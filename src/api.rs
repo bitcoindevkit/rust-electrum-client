@@ -65,6 +65,9 @@ pub trait ElectrumApi {
         self.transaction_broadcast_raw(&buffer)
     }
 
+    /// Executes the requested API call returning the raw answer.
+    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error>;
+
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
     /// reflects the order in which the calls were made on the `Batch` struct.

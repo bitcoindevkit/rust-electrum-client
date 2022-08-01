@@ -5,7 +5,7 @@
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::{Script, Txid};
 
-use types::{Param, ToElectrumScriptHash};
+use types::{Call, Param, ToElectrumScriptHash};
 
 /// Helper structure that caches all the requests before they are actually sent to the server.
 ///
@@ -18,7 +18,7 @@ use types::{Param, ToElectrumScriptHash};
 /// [`batch_script_get_balance`](../client/struct.Client.html#method.batch_script_get_balance) to ask the
 /// server for the balance of multiple scripts with a single request.
 pub struct Batch {
-    calls: Vec<(String, Vec<Param>)>,
+    calls: Vec<Call>,
 }
 
 impl Batch {
