@@ -1,0 +1,3 @@
+[submodule "socks"]
+	path = socks
+	url = https://github.com/RCasatta/rust-socks

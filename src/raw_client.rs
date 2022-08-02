@@ -396,6 +396,7 @@ impl RawClient<ElectrumProxyStream> {
     pub fn new_proxy<T: ToTargetAddr>(
         target_addr: T,
         proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
     ) -> Result<Self, Error> {
         let stream = match proxy.credentials.as_ref() {
             Some(cred) => Socks5Stream::connect_with_password(
@@ -403,8 +404,9 @@ impl RawClient<ElectrumProxyStream> {
                 target_addr,
                 &cred.username,
                 &cred.password,
+                timeout,
             )?,
-            None => Socks5Stream::connect(&proxy.addr, target_addr)?,
+            None => Socks5Stream::connect(&proxy.addr, target_addr, timeout)?,
         };
 
         Ok(stream.into())
@@ -418,6 +420,7 @@ impl RawClient<ElectrumProxyStream> {
         target_addr: T,
         validate_domain: bool,
         proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
     ) -> Result<RawClient<ElectrumSslStream>, Error> {
         let target = target_addr.to_target_addr()?;
 
@@ -427,8 +430,9 @@ impl RawClient<ElectrumProxyStream> {
                 target_addr,
                 &cred.username,
                 &cred.password,
+                timeout,
             )?,
-            None => Socks5Stream::connect(&proxy.addr, target.clone())?,
+            None => Socks5Stream::connect(&proxy.addr, target.clone(), timeout)?,
         };
 
         RawClient::new_ssl_from_stream(target, validate_domain, stream.into_inner())

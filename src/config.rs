@@ -45,18 +45,12 @@ impl ConfigBuilder {
     /// Set the socks5 config if Some, it accept an `Option` because it's easier for the caller to use
     /// in a method chain
     pub fn socks5(mut self, socks5_config: Option<Socks5Config>) -> Result<Self, Error> {
-        if socks5_config.is_some() && self.config.timeout.is_some() {
-            return Err(Error::BothSocksAndTimeout);
-        }
         self.config.socks5 = socks5_config;
         Ok(self)
     }
 
     /// Sets the timeout
     pub fn timeout(mut self, timeout: Option<u8>) -> Result<Self, Error> {
-        if timeout.is_some() && self.config.socks5.is_some() {
-            return Err(Error::BothSocksAndTimeout);
-        }
         self.config.timeout = timeout.map(|t| Duration::from_secs(t as u64));
         Ok(self)
     }

@@ -294,8 +294,6 @@ pub enum Error {
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads
     SharedIOError(Arc<std::io::Error>),
-    /// Setting both a proxy and a timeout in `Config` is an error
-    BothSocksAndTimeout,
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
@@ -348,7 +346,6 @@ impl Display for Error {
             Error::NotSubscribed(_) => write!(f, "Not subscribed to the notifications of an address"),
 
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
-            Error::BothSocksAndTimeout => f.write_str("Setting both a proxy and a timeout in `Config` is an error"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
         }

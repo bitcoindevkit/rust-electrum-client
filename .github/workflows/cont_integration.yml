@@ -27,6 +27,8 @@ jobs:
         run: $HOME/.cargo/bin/rustup default stable
       - name: Set profile
         run: $HOME/.cargo/bin/rustup set profile minimal
+      - name: Update socks submodule
+        run: git submodule update --init
       - name: Fmt
         run: cargo fmt -- --check --verbose
       - name: Test

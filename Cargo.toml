@@ -23,7 +23,7 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 
 # Optional dependencies
-socks = { version = "0.3", optional = true }
+socks = { path="./socks", optional = true }
 openssl = { version = "0.10", optional = true }
 rustls = { version = "0.20", optional = true, features = ["dangerous_configuration"] }
 webpki = { version = "0.22", optional = true }
