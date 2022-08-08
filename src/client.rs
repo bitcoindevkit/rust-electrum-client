@@ -111,9 +111,12 @@ impl ClientType {
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
             let client = match config.socks5() {
-                Some(socks5) => {
-                    RawClient::new_proxy_ssl(url.as_str(), config.validate_domain(), socks5)?
-                }
+                Some(socks5) => RawClient::new_proxy_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    socks5,
+                    config.timeout(),
+                )?,
                 None => {
                     RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
                 }
@@ -125,7 +128,11 @@ impl ClientType {
 
             Ok(match config.socks5().as_ref() {
                 None => ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?),
-                Some(socks5) => ClientType::Socks5(RawClient::new_proxy(url.as_str(), socks5)?),
+                Some(socks5) => ClientType::Socks5(RawClient::new_proxy(
+                    url.as_str(),
+                    socks5,
+                    config.timeout(),
+                )?),
             })
         }
     }

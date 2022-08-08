@@ -31,12 +31,22 @@ extern crate openssl;
 extern crate rustls;
 extern crate serde;
 extern crate serde_json;
-#[cfg(any(feature = "default", feature = "proxy"))]
-extern crate socks;
+
 #[cfg(any(feature = "use-rustls", feature = "default"))]
 extern crate webpki;
 #[cfg(any(feature = "use-rustls", feature = "default"))]
 extern crate webpki_roots;
+
+#[cfg(any(feature = "default", feature = "proxy"))]
+extern crate byteorder;
+
+#[cfg(all(unix, any(feature = "default", feature = "proxy")))]
+extern crate libc;
+#[cfg(all(windows, any(feature = "default", feature = "proxy")))]
+extern crate winapi;
+
+#[cfg(any(feature = "default", feature = "proxy"))]
+mod socks;
 
 mod api;
 mod batch;

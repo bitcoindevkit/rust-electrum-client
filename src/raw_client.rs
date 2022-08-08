@@ -30,7 +30,7 @@ use rustls::{
 };
 
 #[cfg(any(feature = "default", feature = "proxy"))]
-use socks::{Socks5Stream, TargetAddr, ToTargetAddr};
+use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
 use stream::ClonableStream;
 
@@ -396,16 +396,20 @@ impl RawClient<ElectrumProxyStream> {
     pub fn new_proxy<T: ToTargetAddr>(
         target_addr: T,
         proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
     ) -> Result<Self, Error> {
-        let stream = match proxy.credentials.as_ref() {
+        let mut stream = match proxy.credentials.as_ref() {
             Some(cred) => Socks5Stream::connect_with_password(
                 &proxy.addr,
                 target_addr,
                 &cred.username,
                 &cred.password,
+                timeout,
             )?,
-            None => Socks5Stream::connect(&proxy.addr, target_addr)?,
+            None => Socks5Stream::connect(&proxy.addr, target_addr, timeout)?,
         };
+        stream.get_mut().set_read_timeout(timeout)?;
+        stream.get_mut().set_write_timeout(timeout)?;
 
         Ok(stream.into())
     }
@@ -418,18 +422,22 @@ impl RawClient<ElectrumProxyStream> {
         target_addr: T,
         validate_domain: bool,
         proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
     ) -> Result<RawClient<ElectrumSslStream>, Error> {
         let target = target_addr.to_target_addr()?;
 
-        let stream = match proxy.credentials.as_ref() {
+        let mut stream = match proxy.credentials.as_ref() {
             Some(cred) => Socks5Stream::connect_with_password(
                 &proxy.addr,
                 target_addr,
                 &cred.username,
                 &cred.password,
+                timeout,
             )?,
-            None => Socks5Stream::connect(&proxy.addr, target.clone())?,
+            None => Socks5Stream::connect(&proxy.addr, target.clone(), timeout)?,
         };
+        stream.get_mut().set_read_timeout(timeout)?;
+        stream.get_mut().set_write_timeout(timeout)?;
 
         RawClient::new_ssl_from_stream(target, validate_domain, stream.into_inner())
     }
