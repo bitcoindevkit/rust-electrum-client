@@ -46,7 +46,7 @@ extern crate libc;
 extern crate winapi;
 
 #[cfg(any(feature = "default", feature = "proxy"))]
-mod socks;
+pub mod socks;
 
 mod api;
 mod batch;
