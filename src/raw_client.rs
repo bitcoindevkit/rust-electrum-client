@@ -819,6 +819,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         }
 
         script_notifications.insert(script_hash, VecDeque::new());
+        drop(script_notifications);
 
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
