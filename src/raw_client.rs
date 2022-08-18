@@ -485,22 +485,20 @@ impl<S: Read + Write> RawClient<S> {
 
                 // Loop over every message
                 loop {
-                    let send_err = |e: std::io::Error| {
+                    raw_resp.clear();
+
+                    if let Err(e) = reader.read_line(&mut raw_resp) {
                         let error = Arc::new(e);
                         for (_, s) in self.waiting_map.lock().unwrap().drain() {
                             s.send(ChannelMessage::Error(error.clone()))?;
                         }
-
-                        Err(Error::SharedIOError(error))
-                    };
-
-                    match reader.read_line(&mut raw_resp) {
-                        Err(e) => return send_err(e),
-                        Ok(0) => return send_err(std::io::ErrorKind::UnexpectedEof.into()),
-                        _ => {}
+                        return Err(Error::SharedIOError(error));
                     }
-
                     trace!("<== {:?}", raw_resp);
+
+                    if raw_resp.is_empty() {
+                        continue;
+                    }
 
                     let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
 
