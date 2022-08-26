@@ -553,7 +553,6 @@ impl Socks5Datagram {
 
 #[cfg(test)]
 mod test {
-    use std::error::Error;
     use std::io::{Read, Write};
     use std::net::{TcpStream, ToSocketAddrs, UdpSocket};
 
@@ -745,7 +744,7 @@ mod test {
         .unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(err.description(), "password authentication failed");
+        assert_eq!(err.to_string(), "password authentication failed");
     }
 
     #[test]
@@ -755,7 +754,7 @@ mod test {
         let err = Socks5Stream::connect(SOCKS_PROXY_PASSWD_ONLY, addr, None).unwrap_err();
 
         assert_eq!(err.kind(), io::ErrorKind::Other);
-        assert_eq!(err.description(), "no acceptable auth methods");
+        assert_eq!(err.to_string(), "no acceptable auth methods");
     }
 
     #[test]
@@ -772,7 +771,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(err.description(), "password authentication failed");
+        assert_eq!(err.to_string(), "password authentication failed");
 
         let err = Socks5Stream::connect_with_password(
             SOCKS_PROXY_PASSWD_ONLY,
@@ -783,7 +782,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(err.description(), "password authentication failed");
+        assert_eq!(err.to_string(), "password authentication failed");
 
         let err = Socks5Stream::connect_with_password(
             SOCKS_PROXY_PASSWD_ONLY,
@@ -794,7 +793,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert_eq!(err.description(), "invalid username");
+        assert_eq!(err.to_string(), "invalid username");
 
         let err = Socks5Stream::connect_with_password(
             SOCKS_PROXY_PASSWD_ONLY,
@@ -805,7 +804,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert_eq!(err.description(), "invalid username");
+        assert_eq!(err.to_string(), "invalid username");
 
         let err = Socks5Stream::connect_with_password(
             SOCKS_PROXY_PASSWD_ONLY,
@@ -816,7 +815,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert_eq!(err.description(), "invalid password");
+        assert_eq!(err.to_string(), "invalid password");
 
         let err = Socks5Stream::connect_with_password(
             SOCKS_PROXY_PASSWD_ONLY,
@@ -827,7 +826,7 @@ mod test {
         )
         .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert_eq!(err.description(), "invalid password");
+        assert_eq!(err.to_string(), "invalid password");
     }
 
     fn string_of_size(size: usize) -> String {

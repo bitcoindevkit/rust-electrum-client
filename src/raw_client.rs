@@ -1214,7 +1214,7 @@ mod test {
             )
             .unwrap();
         assert_eq!(resp.version, 1);
-        assert_eq!(resp.lock_time, 0);
+        assert_eq!(resp.lock_time.to_u32(), 0);
     }
 
     #[test]
