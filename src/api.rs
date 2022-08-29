@@ -66,7 +66,11 @@ pub trait ElectrumApi {
     }
 
     /// Executes the requested API call returning the raw answer.
-    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error>;
+    fn raw_call(
+        &self,
+        method_name: &str,
+        params: impl IntoIterator<Item = Param>,
+    ) -> Result<serde_json::Value, Error>;
 
     /// Execute a queue of calls stored in a [`Batch`](../batch/struct.Batch.html) struct. Returns
     /// `Ok()` **only if** all of the calls are successful. The order of the JSON `Value`s returned
