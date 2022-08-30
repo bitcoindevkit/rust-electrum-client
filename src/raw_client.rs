@@ -3,7 +3,6 @@
 //! This module contains the definition of the raw client that wraps the transport method
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::convert::TryFrom;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -348,6 +347,8 @@ impl RawClient<ElectrumSslStream> {
         validate_domain: bool,
         tcp_stream: TcpStream,
     ) -> Result<Self, Error> {
+        use std::convert::TryFrom;
+
         let builder = ClientConfig::builder().with_safe_defaults();
 
         let config = if validate_domain {
@@ -658,6 +659,21 @@ impl<S: Read + Write> RawClient<S> {
         Ok(())
     }
 
+    pub(crate) fn internal_raw_call_with_vec(
+        &self,
+        method_name: &str,
+        params: Vec<Param>,
+    ) -> Result<serde_json::Value, Error> {
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            &method_name,
+            params,
+        );
+        let result = self.call(req)?;
+
+        Ok(result)
+    }
+
     #[inline]
     #[cfg(feature = "debug-calls")]
     fn increment_calls(&self) {
@@ -670,15 +686,12 @@ impl<S: Read + Write> RawClient<S> {
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
-    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error> {
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            &call.0,
-            call.1.to_vec(),
-        );
-        let result = self.call(req)?;
-
-        Ok(result)
+    fn raw_call(
+        &self,
+        method_name: &str,
+        params: impl IntoIterator<Item = Param>,
+    ) -> Result<serde_json::Value, Error> {
+        self.internal_raw_call_with_vec(method_name, params.into_iter().collect())
     }
 
     fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
@@ -1312,9 +1325,10 @@ mod test {
             ),
             Param::Bool(false),
         ];
-        let call = ("blockchain.transaction.get".to_string(), params);
 
-        let resp = client.raw_call(&call).unwrap();
+        let resp = client
+            .raw_call("blockchain.transaction.get", params)
+            .unwrap();
 
         assert_eq!(
             resp,

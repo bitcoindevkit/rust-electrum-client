@@ -168,8 +168,18 @@ impl Client {
 
 impl ElectrumApi for Client {
     #[inline]
-    fn raw_call(&self, call: &Call) -> Result<serde_json::Value, Error> {
-        impl_inner_call!(self, raw_call, call)
+    fn raw_call(
+        &self,
+        method_name: &str,
+        params: impl IntoIterator<Item = Param>,
+    ) -> Result<serde_json::Value, Error> {
+        // We can't passthrough this method to the inner client because it would require the
+        // `params` argument to also be `Copy` (because it's used multiple times for multiple
+        // retries). To avoid adding this extra trait bound we instead re-direct this call to the internal
+        // `RawClient::internal_raw_call_with_vec` method.
+
+        let vec = params.into_iter().collect::<Vec<Param>>();
+        impl_inner_call!(self, internal_raw_call_with_vec, method_name, vec.clone());
     }
 
     #[inline]
