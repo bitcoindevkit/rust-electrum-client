@@ -1132,6 +1132,40 @@ mod test {
     }
 
     #[test]
+    fn test_batch_script_get_history() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        // Using different address does not change the behavior
+        // new address: 38zTM2hA9Xg354HfhLGC5kDJfwv8mSU9Gc
+        // old address: 1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF
+        let script_1 = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+            .unwrap()
+            .script_pubkey();
+
+        let mut list = Vec::new();
+
+        for _ in 1..7000 {
+            list.push(&script_1);
+        }
+
+        dbg!("batch_script_get_history started");
+        let _histories = client.batch_script_get_history(list.clone()).unwrap();
+        dbg!("batch_script_get_history finished");
+
+        let awaiting_map = client.waiting_map.lock().unwrap();
+        dbg!(awaiting_map.len());
+        // If we run the batching in a loop (i.e. a periodic sync) then this capacity never goes down.
+        // A lot of memory is getting allocated here
+        dbg!(awaiting_map.capacity());
+
+       let read_buffer = client.buf_reader.lock().unwrap();
+        dbg!(read_buffer.capacity());
+
+    }
+
+    #[test]
     fn test_script_get_history() {
         use std::str::FromStr;
 
