@@ -1,6 +1,6 @@
 //! Electrum Client
 
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use log::{info, warn};
 
@@ -29,8 +29,9 @@ pub enum ClientType {
 
 /// Generalized Electrum client that supports multiple backends. Can re-instantiate client_type if connections
 /// drops
+#[derive(Clone)]
 pub struct Client {
-    client_type: RwLock<ClientType>,
+    client_type: Arc<RwLock<ClientType>>,
     config: Config,
     url: String,
 }
@@ -156,7 +157,7 @@ impl Client {
     /// Generic constructor that supports multiple backends and allows configuration through
     /// the [Config]
     pub fn from_config(url: &str, config: Config) -> Result<Self, Error> {
-        let client_type = RwLock::new(ClientType::from_config(url, &config)?);
+        let client_type = Arc::new(RwLock::new(ClientType::from_config(url, &config)?));
 
         Ok(Client {
             client_type,
