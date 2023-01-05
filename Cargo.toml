@@ -43,3 +43,7 @@ debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
 use-rustls = ["webpki", "webpki-roots", "rustls"]
 use-openssl = ["openssl"]
+test_servers = ["default"]
+
+[dev-dependencies]
+rstest = "^0.11"
