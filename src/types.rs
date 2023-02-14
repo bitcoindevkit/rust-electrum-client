@@ -17,7 +17,7 @@ use serde::{de, Deserialize, Serialize};
 
 static JSONRPC_2_0: &str = "2.0";
 
-pub type Call = (String, Vec<Param>);
+pub(crate) type Call = (String, Vec<Param>);
 
 #[derive(Serialize, Clone)]
 #[serde(untagged)]
