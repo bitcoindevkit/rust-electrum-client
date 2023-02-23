@@ -198,7 +198,7 @@ impl Socks5Stream {
         U: ToTargetAddr,
     {
         let mut socket = if let Some(timeout) = timeout {
-            let addr = proxy.to_socket_addrs().unwrap().next().unwrap();
+            let addr = proxy.to_socket_addrs()?.next().unwrap();
             TcpStream::connect_timeout(&addr, timeout)?
         } else {
             TcpStream::connect(proxy)?
