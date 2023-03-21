@@ -43,6 +43,13 @@ impl Batch {
             .push((String::from("blockchain.scripthash.get_balance"), params));
     }
 
+    /// Add one `blockchain.scripthash.listunspent` request to the batch queue
+    pub fn script_subscribe(&mut self, script: &Script) {
+        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
+        self.calls
+            .push((String::from("blockchain.scripthash.subscribe"), params));
+    }
+
     /// Add one `blockchain.transaction.get` request to the batch queue
     pub fn transaction_get(&mut self, tx_hash: &Txid) {
         let params = vec![Param::String(tx_hash.to_hex())];

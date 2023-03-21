@@ -106,6 +106,13 @@ pub trait ElectrumApi {
     /// already subscribed to the script.
     fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error>;
 
+    /// Batch version of [`script_subscribe`](#method.script_subscribe).
+    ///
+    /// Takes a list of scripts and returns a list of script status responses.
+    fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
+    where
+        I: IntoIterator<Item = &'s Script> + Clone;
+
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
     ///
     /// Returns a `bool` with the server response when successful.

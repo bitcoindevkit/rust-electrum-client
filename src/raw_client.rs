@@ -848,6 +848,24 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(value)?)
     }
 
+    fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
+    where
+        I: IntoIterator<Item = &'s Script> + Clone,
+    {
+        {
+            let mut script_notifications = self.script_notifications.lock()?;
+
+            for script in scripts.clone().into_iter() {
+                let script_hash = script.to_electrum_scripthash();
+                if script_notifications.contains_key(&script_hash) {
+                    return Err(Error::AlreadySubscribed(script_hash));
+                }
+                script_notifications.insert(script_hash, VecDeque::new());
+            }
+        }
+        impl_batch_call!(self, scripts, script_subscribe)
+    }
+
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
         let mut script_notifications = self.script_notifications.lock()?;

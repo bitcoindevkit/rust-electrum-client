@@ -223,6 +223,14 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
+    where
+        I: IntoIterator<Item = &'s Script> + Clone,
+    {
+        impl_inner_call!(self, batch_script_subscribe, scripts.clone())
+    }
+
+    #[inline]
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         impl_inner_call!(self, script_unsubscribe, script)
     }
