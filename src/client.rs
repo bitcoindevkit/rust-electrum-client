@@ -1,6 +1,6 @@
 //! Electrum Client
 
-use std::sync::RwLock;
+use std::{sync::RwLock, borrow::Borrow};
 
 use log::{info, warn};
 
@@ -225,7 +225,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_subscribe, scripts.clone())
     }

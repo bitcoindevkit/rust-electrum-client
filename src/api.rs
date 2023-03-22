@@ -1,5 +1,6 @@
 //! Electrum APIs
 
+use std::borrow::Borrow;
 use std::convert::TryInto;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
@@ -109,9 +110,12 @@ pub trait ElectrumApi {
     /// Batch version of [`script_subscribe`](#method.script_subscribe).
     ///
     /// Takes a list of scripts and returns a list of script status responses.
+    /// 
+    /// Note you should pass a reference to a collection because otherwise an expensive clone is made
     fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
     ///

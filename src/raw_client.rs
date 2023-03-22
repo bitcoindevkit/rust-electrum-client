@@ -2,6 +2,7 @@
 //!
 //! This module contains the definition of the raw client that wraps the transport method
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
@@ -850,13 +851,14 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         {
             let mut script_notifications = self.script_notifications.lock()?;
 
-            for script in scripts.clone().into_iter() {
-                let script_hash = script.to_electrum_scripthash();
+            for script in scripts.clone() {
+                let script_hash = script.borrow().to_electrum_scripthash();
                 if script_notifications.contains_key(&script_hash) {
                     return Err(Error::AlreadySubscribed(script_hash));
                 }
