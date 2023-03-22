@@ -39,7 +39,8 @@ pub trait ElectrumApi {
     /// Takes a list of `txids` and returns a list of transactions.
     fn batch_transaction_get<'t, I>(&self, txids: I) -> Result<Vec<Transaction>, Error>
     where
-        I: IntoIterator<Item = &'t Txid> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'t Txid>,
     {
         self.batch_transaction_get_raw(txids)?
             .iter()
@@ -52,7 +53,8 @@ pub trait ElectrumApi {
     /// Takes a list of `heights` of blocks and returns a list of headers.
     fn batch_block_header<I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
     where
-        I: IntoIterator<Item = u32> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<u32>,
     {
         self.batch_block_header_raw(heights)?
             .iter()
@@ -110,7 +112,7 @@ pub trait ElectrumApi {
     /// Batch version of [`script_subscribe`](#method.script_subscribe).
     ///
     /// Takes a list of scripts and returns a list of script status responses.
-    /// 
+    ///
     /// Note you should pass a reference to a collection because otherwise an expensive clone is made
     fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
     where
@@ -136,7 +138,8 @@ pub trait ElectrumApi {
     /// Takes a list of scripts and returns a list of balance responses.
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
 
     /// Returns the history for a *scriptPubKey*
     fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error>;
@@ -146,7 +149,8 @@ pub trait ElectrumApi {
     /// Takes a list of scripts and returns a list of history responses.
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
 
     /// Returns the list of unspent outputs for a *scriptPubKey*
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error>;
@@ -159,7 +163,8 @@ pub trait ElectrumApi {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
 
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error>;
@@ -169,14 +174,16 @@ pub trait ElectrumApi {
     /// Takes a list of `txids` and returns a list of transactions raw bytes.
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'t Txid>;
 
     /// Batch version of [`block_header_raw`](#method.block_header_raw).
     ///
     /// Takes a list of `heights` of blocks and returns a list of block header raw bytes.
     fn batch_block_header_raw<I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<u32>;
 
     /// Batch version of [`estimate_fee`](#method.estimate_fee).
     ///
@@ -184,7 +191,8 @@ pub trait ElectrumApi {
     /// **Satoshis per kilobyte** to confirm a transaction in the given number of blocks.
     fn batch_estimate_fee<I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize> + Clone;
+        I: IntoIterator + Clone,
+        I::Item: Borrow<usize>;
 
     /// Broadcasts the raw bytes of a transaction to the network.
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error>;

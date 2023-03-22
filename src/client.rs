@@ -1,6 +1,6 @@
 //! Electrum Client
 
-use std::{sync::RwLock, borrow::Borrow};
+use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
@@ -249,7 +249,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_get_balance, scripts.clone())
     }
@@ -262,7 +263,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_get_history, scripts.clone())
     }
@@ -278,7 +280,8 @@ impl ElectrumApi for Client {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_list_unspent, scripts.clone())
     }
@@ -291,7 +294,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'t Txid>,
     {
         impl_inner_call!(self, batch_transaction_get_raw, txids.clone())
     }
@@ -299,7 +303,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<u32>,
     {
         impl_inner_call!(self, batch_block_header_raw, heights.clone())
     }
@@ -307,7 +312,8 @@ impl ElectrumApi for Client {
     #[inline]
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<usize>,
     {
         impl_inner_call!(self, batch_estimate_fee, numbers.clone())
     }

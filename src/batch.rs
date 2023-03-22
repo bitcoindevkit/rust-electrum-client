@@ -46,8 +46,8 @@ impl Batch {
     }
 
     /// Add one `blockchain.scripthash.listunspent` request to the batch queue
-    pub fn script_subscribe<'a, B: Borrow<&'a Script>>(&mut self, script: B) {
-        let params = vec![Param::String(script.borrow().to_electrum_scripthash().to_hex())];
+    pub fn script_subscribe(&mut self, script: &Script) {
+        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         self.calls
             .push((String::from("blockchain.scripthash.subscribe"), params));
     }
