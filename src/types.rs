@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
+use bitcoin::hashes::hex::{FromHex, ToHex};
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{Script, Txid};
 
@@ -69,8 +69,8 @@ impl<'a> Request<'a> {
 }
 
 #[doc(hidden)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
-pub struct Hex32Bytes(#[serde(deserialize_with = "from_hex")] [u8; 32]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct Hex32Bytes(#[serde(deserialize_with = "from_hex", serialize_with = "to_hex")] [u8; 32]);
 
 impl Deref for Hex32Bytes {
     type Target = [u8; 32];
@@ -116,6 +116,13 @@ where
 {
     let s = String::deserialize(deserializer)?;
     T::from_hex(&s).map_err(de::Error::custom)
+}
+
+fn to_hex<S>(bytes: &[u8], serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::ser::Serializer,
+{
+    serializer.serialize_str(&bytes.to_hex())
 }
 
 fn from_hex_array<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -386,5 +393,18 @@ impl<T> From<std::sync::mpsc::SendError<T>> for Error {
 impl From<std::sync::mpsc::RecvError> for Error {
     fn from(_: std::sync::mpsc::RecvError) -> Self {
         Error::Mpsc
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ScriptStatus;
+
+    #[test]
+    fn script_status_roundtrip() {
+        let script_status: ScriptStatus = [1u8; 32].into();
+        let script_status_json = serde_json::to_string(&script_status).unwrap();
+        let script_status_back = serde_json::from_str(&script_status_json).unwrap();
+        assert_eq!(script_status, script_status_back);
     }
 }
