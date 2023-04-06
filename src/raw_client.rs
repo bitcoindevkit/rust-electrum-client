@@ -16,8 +16,9 @@ use std::time::Duration;
 use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::{Script, Txid};
+use bitcoin_private::hex::exts::DisplayHex;
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -974,7 +975,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
-        let params = vec![Param::String(txid.to_hex())];
+        let params = vec![Param::String(format!("{:x}", txid))];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.get",
@@ -1023,7 +1024,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
-        let params = vec![Param::String(raw_tx.to_hex())];
+        let params = vec![Param::String(raw_tx.to_lower_hex_string())];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.broadcast",
@@ -1035,7 +1036,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
-        let params = vec![Param::String(txid.to_hex()), Param::Usize(height)];
+        let params = vec![Param::String(format!("{:x}", txid)), Param::Usize(height)];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.get_merkle",
@@ -1076,6 +1077,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use super::RawClient;
     use api::ElectrumApi;
 
@@ -1119,7 +1122,7 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_header(0).unwrap();
-        assert_eq!(resp.version, 0x01);
+        assert_eq!(resp.version, bitcoin::block::Version::ONE);
         assert_eq!(resp.time, 1231006505);
         assert_eq!(resp.nonce, 0x7c2bac1d);
     }
@@ -1160,7 +1163,9 @@ mod test {
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
-        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr").unwrap();
+        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr")
+            .unwrap()
+            .assume_checked();
         let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
         assert!(resp.confirmed >= 213091301265);
     }
@@ -1169,26 +1174,26 @@ mod test {
     fn test_script_get_history() {
         use std::str::FromStr;
 
-        use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
-        let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
+        let resp = client
+            .script_get_history(&addr.payload.script_pubkey())
+            .unwrap();
 
         assert!(resp.len() >= 328);
         assert_eq!(
             resp[0].tx_hash,
-            Txid::from_hex("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
+            Txid::from_str("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
                 .unwrap()
         );
     }
 
     #[test]
     fn test_script_list_unspent() {
-        use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
         use std::str::FromStr;
 
@@ -1196,11 +1201,13 @@ mod test {
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
-        let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
+        let resp = client
+            .script_list_unspent(&addr.payload.script_pubkey())
+            .unwrap();
 
         assert!(resp.len() >= 329);
         let txid = "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114";
-        let txid = Txid::from_hex(txid).unwrap();
+        let txid = Txid::from_str(txid).unwrap();
         let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].value, 7995600000000);
@@ -1217,9 +1224,12 @@ mod test {
         // Mt.Gox hack address
         let script_1 = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
             .unwrap()
+            .payload
             .script_pubkey();
 
-        let resp = client.batch_script_list_unspent(vec![&script_1]).unwrap();
+        let resp = client
+            .batch_script_list_unspent(vec![script_1.as_script()])
+            .unwrap();
         assert_eq!(resp.len(), 1);
         assert!(resp[0].len() >= 329);
     }
@@ -1236,31 +1246,29 @@ mod test {
 
     #[test]
     fn test_transaction_get() {
-        use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get(
-                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
+                &Txid::from_str("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
                     .unwrap(),
             )
             .unwrap();
         assert_eq!(resp.version, 1);
-        assert_eq!(resp.lock_time.to_u32(), 0);
+        assert_eq!(resp.lock_time.to_consensus_u32(), 0);
     }
 
     #[test]
     fn test_transaction_get_raw() {
-        use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get_raw(
-                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
+                &Txid::from_str("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
                     .unwrap(),
             )
             .unwrap();
@@ -1288,14 +1296,13 @@ mod test {
 
     #[test]
     fn test_transaction_get_merkle() {
-        use bitcoin::hashes::hex::FromHex;
         use bitcoin::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client
             .transaction_get_merkle(
-                &Txid::from_hex("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
+                &Txid::from_str("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
                     .unwrap(),
                 630000,
             )
@@ -1336,7 +1343,9 @@ mod test {
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
 
         // Just make sure that the call returns Ok(something)
-        client.script_subscribe(&addr.script_pubkey()).unwrap();
+        client
+            .script_subscribe(&addr.payload.script_pubkey())
+            .unwrap();
     }
 
     #[test]

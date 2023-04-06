@@ -1,4 +1,3 @@
-use crate::Error;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
