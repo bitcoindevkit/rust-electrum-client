@@ -2,6 +2,7 @@
 //!
 //! This module contains the definition of the raw client that wraps the transport method
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
@@ -39,9 +40,17 @@ use types::*;
 
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
+        impl_batch_call!($self, $data, $call, )
+    }};
+
+    ( $self:expr, $data:expr, $call:ident, apply_deref ) => {{
+        impl_batch_call!($self, $data, $call, *)
+    }};
+
+    ( $self:expr, $data:expr, $call:ident, $($apply_deref:tt)? ) => {{
         let mut batch = Batch::default();
         for i in $data {
-            batch.$call(i);
+            batch.$call($($apply_deref)* i.borrow());
         }
 
         let resp = $self.batch_call(&batch)?;
@@ -848,6 +857,25 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(value)?)
     }
 
+    fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        {
+            let mut script_notifications = self.script_notifications.lock()?;
+
+            for script in scripts.clone() {
+                let script_hash = script.borrow().to_electrum_scripthash();
+                if script_notifications.contains_key(&script_hash) {
+                    return Err(Error::AlreadySubscribed(script_hash));
+                }
+                script_notifications.insert(script_hash, VecDeque::new());
+            }
+        }
+        impl_batch_call!(self, scripts, script_subscribe)
+    }
+
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
         let mut script_notifications = self.script_notifications.lock()?;
@@ -891,7 +919,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
     fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_batch_call!(self, scripts, script_get_balance)
     }
@@ -909,7 +938,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_batch_call!(self, scripts, script_get_history)
     }
@@ -937,7 +967,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         scripts: I,
     ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
     where
-        I: IntoIterator<Item = &'s Script> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
     {
         impl_batch_call!(self, scripts, script_list_unspent)
     }
@@ -960,7 +991,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = &'t Txid> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'t Txid>,
     {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
@@ -971,10 +1003,11 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_block_header_raw<'s, I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
     where
-        I: IntoIterator<Item = u32> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<u32>,
     {
         let headers_string: Result<Vec<String>, Error> =
-            impl_batch_call!(self, heights, block_header);
+            impl_batch_call!(self, heights, block_header, apply_deref);
         headers_string?
             .iter()
             .map(|s| Ok(Vec::<u8>::from_hex(s)?))
@@ -983,9 +1016,10 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
     where
-        I: IntoIterator<Item = usize> + Clone,
+        I: IntoIterator + Clone,
+        I::Item: Borrow<usize>,
     {
-        impl_batch_call!(self, numbers, estimate_fee)
+        impl_batch_call!(self, numbers, estimate_fee, apply_deref)
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {

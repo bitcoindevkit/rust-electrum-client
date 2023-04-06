@@ -2,6 +2,8 @@
 //!
 //! This module contains definitions and helper functions used when making batch calls.
 
+use std::borrow::Borrow;
+
 use bitcoin::hashes::hex::ToHex;
 use bitcoin::{Script, Txid};
 
@@ -41,6 +43,13 @@ impl Batch {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
         self.calls
             .push((String::from("blockchain.scripthash.get_balance"), params));
+    }
+
+    /// Add one `blockchain.scripthash.listunspent` request to the batch queue
+    pub fn script_subscribe(&mut self, script: &Script) {
+        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
+        self.calls
+            .push((String::from("blockchain.scripthash.subscribe"), params));
     }
 
     /// Add one `blockchain.transaction.get` request to the batch queue
