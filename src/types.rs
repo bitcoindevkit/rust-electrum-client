@@ -9,10 +9,11 @@ use std::sync::Arc;
 
 use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::{FromHex, ToHex};
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::{Script, Txid};
 
+use bitcoin_private::hex::exts::DisplayHex;
 use serde::{de, Deserialize, Serialize};
 
 static JSONRPC_2_0: &str = "2.0";
@@ -86,6 +87,12 @@ impl From<[u8; 32]> for Hex32Bytes {
     }
 }
 
+impl Hex32Bytes {
+    pub(crate) fn to_hex(&self) -> String {
+        self.0.to_lower_hex_string()
+    }
+}
+
 /// Format used by the Electrum server to identify an address. The reverse sha256 hash of the
 /// scriptPubKey. Documented [here](https://electrumx.readthedocs.io/en/latest/protocol-basics.html#script-hashes).
 pub type ScriptHash = Hex32Bytes;
@@ -102,7 +109,7 @@ pub trait ToElectrumScriptHash {
 
 impl ToElectrumScriptHash for Script {
     fn to_electrum_scripthash(&self) -> ScriptHash {
-        let mut result = sha256::Hash::hash(self.as_bytes()).into_inner();
+        let mut result = sha256::Hash::hash(self.as_bytes()).to_byte_array();
         result.reverse();
 
         result.into()
@@ -122,7 +129,7 @@ fn to_hex<S>(bytes: &[u8], serializer: S) -> std::result::Result<S::Ok, S::Error
 where
     S: serde::ser::Serializer,
 {
-    serializer.serialize_str(&bytes.to_hex())
+    serializer.serialize_str(&bytes.to_lower_hex_string())
 }
 
 fn from_hex_array<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -145,7 +152,7 @@ where
     Ok(answer)
 }
 
-fn from_hex_header<'de, D>(deserializer: D) -> Result<block::BlockHeader, D::Error>
+fn from_hex_header<'de, D>(deserializer: D) -> Result<block::Header, D::Error>
 where
     D: de::Deserializer<'de>,
 {
@@ -208,7 +215,7 @@ pub struct GetHeadersRes {
     pub raw_headers: Vec<u8>,
     /// Array of block headers.
     #[serde(skip)]
-    pub headers: Vec<block::BlockHeader>,
+    pub headers: Vec<block::Header>,
 }
 
 /// Response to a [`script_get_balance`](../client/struct.Client.html#method.script_get_balance) request.
@@ -241,7 +248,7 @@ pub struct HeaderNotification {
     pub height: usize,
     /// Newly added header.
     #[serde(rename = "hex", deserialize_with = "from_hex_header")]
-    pub header: block::BlockHeader,
+    pub header: block::Header,
 }
 
 /// Notification of a new block header with the header encoded as raw bytes

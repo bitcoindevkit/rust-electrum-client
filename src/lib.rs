@@ -20,6 +20,7 @@
 //! ```
 
 pub extern crate bitcoin;
+extern crate bitcoin_private;
 extern crate core;
 extern crate log;
 #[cfg(feature = "use-openssl")]

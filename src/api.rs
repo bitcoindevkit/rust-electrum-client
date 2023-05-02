@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::convert::TryInto;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{BlockHeader, Script, Transaction, Txid};
+use bitcoin::{block, Script, Transaction, Txid};
 
 use batch::Batch;
 use types::*;
@@ -12,7 +12,7 @@ use types::*;
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {
     /// Gets the block header for height `height`.
-    fn block_header(&self, height: usize) -> Result<BlockHeader, Error> {
+    fn block_header(&self, height: usize) -> Result<block::Header, Error> {
         Ok(deserialize(&self.block_header_raw(height)?)?)
     }
 
@@ -51,7 +51,7 @@ pub trait ElectrumApi {
     /// Batch version of [`block_header`](#method.block_header).
     ///
     /// Takes a list of `heights` of blocks and returns a list of headers.
-    fn batch_block_header<I>(&self, heights: I) -> Result<Vec<BlockHeader>, Error>
+    fn batch_block_header<I>(&self, heights: I) -> Result<Vec<block::Header>, Error>
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<u32>,
