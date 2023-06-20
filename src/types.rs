@@ -327,6 +327,9 @@ pub enum Error {
     #[cfg(feature = "use-openssl")]
     /// SSL Handshake failed with the server
     SslHandshakeError(openssl::ssl::HandshakeError<std::net::TcpStream>),
+
+    /// Expecting notification on headers but we are not subscribed
+    NotSubscribedToHeaders,
 }
 
 impl Display for Error {
@@ -364,6 +367,7 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            Error::NotSubscribedToHeaders =>  write!(f, "Expecting notification on headers but we are not subscribed"),
         }
     }
 }
