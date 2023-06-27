@@ -25,7 +25,7 @@ serde_json = { version = "^1.0" }
 
 # Optional dependencies
 openssl = { version = "0.10", optional = true }
-rustls = { version = "0.20", optional = true, features = ["dangerous_configuration"] }
+rustls = { version = "0.21", optional = true, features = ["dangerous_configuration"] }
 webpki = { version = "0.22", optional = true }
 webpki-roots = { version = "0.22", optional = true }
 
