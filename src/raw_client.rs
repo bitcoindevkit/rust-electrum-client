@@ -1214,20 +1214,20 @@ mod test {
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
-        // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
+        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+        let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko").unwrap();
         let resp = client
             .script_list_unspent(&addr.payload.script_pubkey())
             .unwrap();
 
-        assert!(resp.len() >= 329);
-        let txid = "e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114";
+        assert!(resp.len() >= 9);
+        let txid = "397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0";
         let txid = Txid::from_str(txid).unwrap();
         let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].value, 7995600000000);
-        assert_eq!(txs[0].height, 111194);
-        assert_eq!(txs[0].tx_pos, 0);
+        assert_eq!(txs[0].value, 10000000);
+        assert_eq!(txs[0].height, 257674);
+        assert_eq!(txs[0].tx_pos, 1);
     }
 
     #[test]
@@ -1236,8 +1236,8 @@ mod test {
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
-        // Mt.Gox hack address
-        let script_1 = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+        let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
             .unwrap()
             .payload
             .script_pubkey();
@@ -1246,7 +1246,7 @@ mod test {
             .batch_script_list_unspent(vec![script_1.as_script()])
             .unwrap();
         assert_eq!(resp.len(), 1);
-        assert!(resp[0].len() >= 329);
+        assert!(resp[0].len() >= 9);
     }
 
     #[test]
