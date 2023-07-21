@@ -133,7 +133,7 @@ where
     last_id: AtomicUsize,
     waiting_map: Mutex<HashMap<usize, Sender<ChannelMessage>>>,
 
-    headers: Mutex<Option<VecDeque<RawHeaderNotification>>>,
+    headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
     #[cfg(feature = "debug-calls")]
@@ -154,7 +154,7 @@ where
             last_id: AtomicUsize::new(0),
             waiting_map: Mutex::new(HashMap::new()),
 
-            headers: Mutex::new(None),
+            headers: Mutex::new(VecDeque::new()),
             script_notifications: Mutex::new(HashMap::new()),
 
             #[cfg(feature = "debug-calls")]
@@ -648,17 +648,11 @@ impl<S: Read + Write> RawClient<S> {
 
     fn handle_notification(&self, method: &str, result: serde_json::Value) -> Result<(), Error> {
         match method {
-            "blockchain.headers.subscribe" => {
-                let mut queue = self.headers.lock()?;
-                match queue.as_mut() {
-                    None => return Err(Error::NotSubscribedToHeaders),
-                    Some(queue) => queue.append(
-                        &mut serde_json::from_value::<Vec<RawHeaderNotification>>(result)?
-                            .into_iter()
-                            .collect(),
-                    ),
-                }
-            }
+            "blockchain.headers.subscribe" => self.headers.lock()?.append(
+                &mut serde_json::from_value::<Vec<RawHeaderNotification>>(result)?
+                    .into_iter()
+                    .collect(),
+            ),
             "blockchain.scripthash.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
                 let mut script_notifications = self.script_notifications.lock()?;
@@ -768,11 +762,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
-        let mut headers = self.headers.lock()?;
-        if headers.is_none() {
-            *headers = Some(VecDeque::new());
-        }
-
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.headers.subscribe",
@@ -784,11 +773,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
-        let mut queue = self.headers.lock()?;
-        match queue.as_mut() {
-            None => Err(Error::NotSubscribedToHeaders),
-            Some(queue) => Ok(queue.pop_front()),
-        }
+        Ok(self.headers.lock()?.pop_front())
     }
 
     fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
@@ -1346,16 +1331,6 @@ mod test {
         let resp = client.block_headers_subscribe().unwrap();
 
         assert!(resp.height >= 639000);
-    }
-
-    #[test]
-    fn test_block_headers_subscribe_pop() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
-        let resp = client.block_headers_pop();
-        assert_eq!(format!("{:?}", resp), "Err(NotSubscribedToHeaders)");
-        client.block_headers_subscribe().unwrap();
-        let resp = client.block_headers_pop();
-        assert!(resp.is_ok());
     }
 
     #[test]
