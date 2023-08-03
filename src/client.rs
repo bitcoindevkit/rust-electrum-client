@@ -49,7 +49,7 @@ macro_rules! impl_inner_call {
             drop(read_client);
             match res {
                 Ok(val) => return Ok(val),
-                Err(Error::Protocol(_) | Error::AlreadySubscribed(_) | Error::NotSubscribed(_) | Error::NotSubscribedToHeaders) => {
+                Err(Error::Protocol(_) | Error::AlreadySubscribed(_)) => {
                     return res;
                 },
                 Err(e) => {
