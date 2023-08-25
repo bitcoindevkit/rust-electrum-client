@@ -34,8 +34,6 @@ extern crate serde;
 extern crate serde_json;
 
 #[cfg(any(feature = "use-rustls", feature = "default"))]
-extern crate webpki;
-#[cfg(any(feature = "use-rustls", feature = "default"))]
 extern crate webpki_roots;
 
 #[cfg(any(feature = "default", feature = "proxy"))]
