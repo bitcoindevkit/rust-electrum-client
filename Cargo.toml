@@ -18,8 +18,9 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "^0.4"
-bitcoin = { version = "^0.30", features = ["serde"] }
-bitcoin-private = "0.1.0"
+bitcoin-private = {version = "^0.1.0", optional = true }
+bitcoin = { version = "^0.30", features = ["serde"] , optional = true}
+bitcoincash = { version = "^0.29.2", features = ["serde"] , optional = true}
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 
@@ -38,9 +39,11 @@ libc = { version = "0.2", optional = true }
 winapi = { version="0.3.9", features=["winsock2"], optional = true }
 
 [features]
-default = ["proxy", "use-rustls"]
+default = ["proxy", "use-rustls", "use-bitcoincash"]
 minimal = []
 debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
 use-rustls = ["webpki", "webpki-roots", "rustls"]
 use-openssl = ["openssl"]
+use-bitcoin = ["bitcoin", "bitcoin-private"]
+use-bitcoincash = ["bitcoincash", "bitcoin-private"]

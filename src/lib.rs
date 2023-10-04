@@ -19,7 +19,12 @@
 //! # Ok::<(), electrum_client::Error>(())
 //! ```
 
-pub extern crate bitcoin;
+#[cfg(feature = "use-bitcoin")]
+pub extern crate bitcoin as bitcoin_lib;
+
+#[cfg(feature = "use-bitcoincash")]
+pub extern crate bitcoincash as bitcoin_lib;
+
 extern crate bitcoin_private;
 extern crate core;
 extern crate log;

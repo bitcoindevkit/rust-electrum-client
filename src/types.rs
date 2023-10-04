@@ -7,18 +7,25 @@ use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
-use bitcoin::blockdata::block;
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
-use bitcoin::hashes::{sha256, Hash};
-use bitcoin::{Script, Txid};
+use bitcoin_lib::blockdata::block;
+use bitcoin_lib::consensus::encode::deserialize;
+use bitcoin_lib::hashes::hex::FromHex;
+use bitcoin_lib::hashes::{sha256, Hash};
+use bitcoin_lib::{Script, Txid};
 
 use bitcoin_private::hex::exts::DisplayHex;
+use bitcoin_private::hex::Case;
 use serde::{de, Deserialize, Serialize};
 
 static JSONRPC_2_0: &str = "2.0";
 
 pub type Call = (String, Vec<Param>);
+
+#[cfg(feature = "use-bitcoin")]
+pub use bitcoin_lib::blockdata::block::Header as HeaderType;
+
+#[cfg(feature = "use-bitcoincash")]
+pub use bitcoin_lib::blockdata::block::BlockHeader as HeaderType;
 
 #[derive(Serialize, Clone)]
 #[serde(untagged)]
@@ -89,7 +96,14 @@ impl From<[u8; 32]> for Hex32Bytes {
 
 impl Hex32Bytes {
     pub(crate) fn to_hex(&self) -> String {
-        self.0.to_lower_hex_string()
+        #[cfg(feature = "use-bitcoin")]
+        return self.0.to_lower_hex_string();
+        #[cfg(feature = "use-bitcoincash")]
+        {
+            let mut string = String::new();
+            lower_hex_string(&self.0, &mut string);
+            return string;
+        }
     }
 }
 
@@ -109,7 +123,11 @@ pub trait ToElectrumScriptHash {
 
 impl ToElectrumScriptHash for Script {
     fn to_electrum_scripthash(&self) -> ScriptHash {
+        #[cfg(feature = "use-bitcoin")]
         let mut result = sha256::Hash::hash(self.as_bytes()).to_byte_array();
+        #[cfg(feature = "use-bitcoincash")]
+        let mut result = sha256::Hash::hash(self.as_bytes()).into_inner();
+
         result.reverse();
 
         result.into()
@@ -125,11 +143,33 @@ where
     T::from_hex(&s).map_err(de::Error::custom)
 }
 
+fn lower_hex_string(bytes: &[u8], string: &mut String) {
+    use self::fmt::Write;
+    string.reserve(0);
+
+    write!(string, "{:x}", bytes.as_hex()).unwrap_or_else(|_| {
+        let name = core::any::type_name::<dyn Display>();
+        // We don't expect `std` to ever be buggy, so the bug is most likely in the `Display`
+        // impl of `Self::Display`.
+        panic!(
+            "The implementation of Display for {} returned an error when it shouldn't",
+            name
+        )
+    })
+}
+
 fn to_hex<S>(bytes: &[u8], serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
     S: serde::ser::Serializer,
 {
-    serializer.serialize_str(&bytes.to_lower_hex_string())
+    #[cfg(feature = "use-bitcoin")]
+    return serializer.serialize_str(&bytes.to_lower_hex_string());
+    #[cfg(feature = "use-bitcoincash")]
+    {
+        let mut string = String::new();
+        lower_hex_string(bytes, &mut string);
+        return serializer.serialize_str(&string);
+    }
 }
 
 fn from_hex_array<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -152,7 +192,7 @@ where
     Ok(answer)
 }
 
-fn from_hex_header<'de, D>(deserializer: D) -> Result<block::Header, D::Error>
+fn from_hex_header<'de, D>(deserializer: D) -> Result<HeaderType, D::Error>
 where
     D: de::Deserializer<'de>,
 {
@@ -215,7 +255,7 @@ pub struct GetHeadersRes {
     pub raw_headers: Vec<u8>,
     /// Array of block headers.
     #[serde(skip)]
-    pub headers: Vec<block::Header>,
+    pub headers: Vec<HeaderType>,
 }
 
 /// Response to a [`script_get_balance`](../client/struct.Client.html#method.script_get_balance) request.
@@ -248,7 +288,7 @@ pub struct HeaderNotification {
     pub height: usize,
     /// Newly added header.
     #[serde(rename = "hex", deserialize_with = "from_hex_header")]
-    pub header: block::Header,
+    pub header: HeaderType,
 }
 
 /// Notification of a new block header with the header encoded as raw bytes
@@ -267,7 +307,7 @@ impl TryFrom<RawHeaderNotification> for HeaderNotification {
     fn try_from(raw: RawHeaderNotification) -> Result<Self, Self::Error> {
         Ok(HeaderNotification {
             height: raw.height,
-            header: deserialize(&raw.header)?,
+            header: deserialize(&raw.header).unwrap(),
         })
     }
 }
@@ -289,11 +329,11 @@ pub enum Error {
     /// Wraps `serde_json::error::Error`
     JSON(serde_json::error::Error),
     /// Wraps `bitcoin::hashes::hex::Error`
-    Hex(bitcoin::hashes::hex::Error),
+    Hex(bitcoin_lib::hashes::hex::Error),
     /// Error returned by the Electrum server
     Protocol(serde_json::Value),
     /// Error during the deserialization of a Bitcoin data structure
-    Bitcoin(bitcoin::consensus::encode::Error),
+    Bitcoin(bitcoin_lib::consensus::encode::Error),
     /// Already subscribed to the notifications of an address
     AlreadySubscribed(ScriptHash),
     /// Not subscribed to the notifications of an address
@@ -382,8 +422,8 @@ macro_rules! impl_error {
 
 impl_error!(std::io::Error, IOError);
 impl_error!(serde_json::Error, JSON);
-impl_error!(bitcoin::hashes::hex::Error, Hex);
-impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
+impl_error!(bitcoin_lib::hashes::hex::Error, Hex);
+impl_error!(bitcoin_lib::consensus::encode::Error, Bitcoin);
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(_: std::sync::PoisonError<T>) -> Self {

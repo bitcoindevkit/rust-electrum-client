@@ -1,19 +1,24 @@
 //! Electrum APIs
 
+use bitcoin_lib::consensus::encode::{deserialize, serialize};
+use bitcoin_lib::{Script, Transaction, Txid};
 use std::borrow::Borrow;
 use std::convert::TryInto;
-
-use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{block, Script, Transaction, Txid};
 
 use batch::Batch;
 use types::*;
 
+#[cfg(feature = "use-bitcoin")]
+pub use bitcoin_lib::blockdata::block::Header as HeaderType;
+
+#[cfg(feature = "use-bitcoincash")]
+pub use bitcoin_lib::blockdata::block::BlockHeader as HeaderType;
+
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {
     /// Gets the block header for height `height`.
-    fn block_header(&self, height: usize) -> Result<block::Header, Error> {
-        Ok(deserialize(&self.block_header_raw(height)?)?)
+    fn block_header(&self, height: usize) -> Result<HeaderType, Error> {
+        Ok(deserialize(&self.block_header_raw(height)?).unwrap())
     }
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
@@ -31,7 +36,7 @@ pub trait ElectrumApi {
 
     /// Gets the transaction with `txid`. Returns an error if not found.
     fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
-        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
+        Ok(deserialize(&self.transaction_get_raw(txid)?).unwrap())
     }
 
     /// Batch version of [`transaction_get`](#method.transaction_get).
@@ -44,21 +49,21 @@ pub trait ElectrumApi {
     {
         self.batch_transaction_get_raw(txids)?
             .iter()
-            .map(|s| Ok(deserialize(s)?))
+            .map(|s| Ok(deserialize(s).unwrap()))
             .collect()
     }
 
     /// Batch version of [`block_header`](#method.block_header).
     ///
     /// Takes a list of `heights` of blocks and returns a list of headers.
-    fn batch_block_header<I>(&self, heights: I) -> Result<Vec<block::Header>, Error>
+    fn batch_block_header<I>(&self, heights: I) -> Result<Vec<HeaderType>, Error>
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<u32>,
     {
         self.batch_block_header_raw(heights)?
             .iter()
-            .map(|s| Ok(deserialize(s)?))
+            .map(|s| Ok(deserialize(s).unwrap()))
             .collect()
     }
 

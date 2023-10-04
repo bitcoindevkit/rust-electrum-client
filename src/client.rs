@@ -4,7 +4,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{Script, Txid};
+use bitcoin_lib::{Script, Txid};
 
 use api::ElectrumApi;
 use batch::Batch;

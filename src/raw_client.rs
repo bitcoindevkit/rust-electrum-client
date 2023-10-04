@@ -4,6 +4,8 @@
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::fmt;
+use std::fmt::{Display, Formatter};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -15,9 +17,9 @@ use std::time::Duration;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
-use bitcoin::{Script, Txid};
+use bitcoin_lib::consensus::encode::deserialize;
+use bitcoin_lib::hashes::hex::FromHex;
+use bitcoin_lib::{Script, Txid};
 use bitcoin_private::hex::exts::DisplayHex;
 
 #[cfg(feature = "use-openssl")]
@@ -460,7 +462,20 @@ enum ChannelMessage {
     WakeUp,
     Error(Arc<std::io::Error>),
 }
+fn lower_hex_string(bytes: &[u8], string: &mut String) {
+    use self::fmt::Write;
+    string.reserve(0);
 
+    write!(string, "{:x}", bytes.as_hex()).unwrap_or_else(|_| {
+        let name = core::any::type_name::<dyn Display>();
+        // We don't expect `std` to ever be buggy, so the bug is most likely in the `Display`
+        // impl of `Self::Display`.
+        panic!(
+            "The implementation of Display for {} returned an error when it shouldn't",
+            name
+        )
+    })
+}
 impl<S: Read + Write> RawClient<S> {
     // TODO: to enable this we have to find a way to allow concurrent read and writes to the
     // underlying transport struct. This can be done pretty easily for TcpStream because it can be
@@ -788,7 +803,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             result
                 .as_str()
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
-        )?)
+        )
+        .unwrap())
     }
 
     fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error> {
@@ -804,7 +820,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             let (start, end) = (i * 80, (i + 1) * 80);
             deserialized
                 .headers
-                .push(deserialize(&deserialized.raw_headers[start..end])?);
+                .push(deserialize(&deserialized.raw_headers[start..end]).unwrap());
         }
         deserialized.raw_headers.clear();
 
@@ -986,8 +1002,10 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(Vec::<u8>::from_hex(
             result
                 .as_str()
-                .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
-        )?)
+                .ok_or_else(|| Error::InvalidResponse(result.clone()))
+                .unwrap(),
+        )
+        .unwrap())
     }
 
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
@@ -998,7 +1016,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
             .iter()
-            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
+            .map(|s| Ok(Vec::<u8>::from_hex(s).unwrap()))
             .collect()
     }
 
@@ -1011,7 +1029,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             impl_batch_call!(self, heights, block_header, apply_deref);
         headers_string?
             .iter()
-            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
+            .map(|s| Ok(Vec::<u8>::from_hex(s).unwrap()))
             .collect()
     }
 
@@ -1024,7 +1042,18 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
+        let mut params: Vec<Param> = Vec::new();
+
+        #[cfg(feature = "use-bitcoin")]
         let params = vec![Param::String(raw_tx.to_lower_hex_string())];
+
+        #[cfg(feature = "use-bitcoincash")]
+        {
+            let mut string = String::new();
+            lower_hex_string(raw_tx, &mut string);
+            let params = vec![Param::String(string)];
+        }
+
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.broadcast",
