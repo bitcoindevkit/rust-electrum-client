@@ -7,14 +7,12 @@ use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
-use bitcoin_lib::blockdata::block;
 use bitcoin_lib::consensus::encode::deserialize;
 use bitcoin_lib::hashes::hex::FromHex;
 use bitcoin_lib::hashes::{sha256, Hash};
 use bitcoin_lib::{Script, Txid};
 
 use bitcoin_private::hex::exts::DisplayHex;
-use bitcoin_private::hex::Case;
 use serde::{de, Deserialize, Serialize};
 
 static JSONRPC_2_0: &str = "2.0";
@@ -143,6 +141,7 @@ where
     T::from_hex(&s).map_err(de::Error::custom)
 }
 
+#[cfg(feature = "use-bitcoincash")]
 fn lower_hex_string(bytes: &[u8], string: &mut String) {
     use self::fmt::Write;
     string.reserve(0);
@@ -307,7 +306,7 @@ impl TryFrom<RawHeaderNotification> for HeaderNotification {
     fn try_from(raw: RawHeaderNotification) -> Result<Self, Self::Error> {
         Ok(HeaderNotification {
             height: raw.height,
-            header: deserialize(&raw.header).unwrap(),
+            header: deserialize(&raw.header)?,
         })
     }
 }

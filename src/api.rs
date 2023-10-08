@@ -18,7 +18,7 @@ pub use bitcoin_lib::blockdata::block::BlockHeader as HeaderType;
 pub trait ElectrumApi {
     /// Gets the block header for height `height`.
     fn block_header(&self, height: usize) -> Result<HeaderType, Error> {
-        Ok(deserialize(&self.block_header_raw(height)?).unwrap())
+        Ok(deserialize(&self.block_header_raw(height)?)?)
     }
 
     /// Subscribes to notifications for new block headers, by sending a `blockchain.headers.subscribe` call.
@@ -36,7 +36,7 @@ pub trait ElectrumApi {
 
     /// Gets the transaction with `txid`. Returns an error if not found.
     fn transaction_get(&self, txid: &Txid) -> Result<Transaction, Error> {
-        Ok(deserialize(&self.transaction_get_raw(txid)?).unwrap())
+        Ok(deserialize(&self.transaction_get_raw(txid)?)?)
     }
 
     /// Batch version of [`transaction_get`](#method.transaction_get).
@@ -49,7 +49,7 @@ pub trait ElectrumApi {
     {
         self.batch_transaction_get_raw(txids)?
             .iter()
-            .map(|s| Ok(deserialize(s).unwrap()))
+            .map(|s| Ok(deserialize(s)?))
             .collect()
     }
 
@@ -63,7 +63,7 @@ pub trait ElectrumApi {
     {
         self.batch_block_header_raw(heights)?
             .iter()
-            .map(|s| Ok(deserialize(s).unwrap()))
+            .map(|s| Ok(deserialize(s)?))
             .collect()
     }
 

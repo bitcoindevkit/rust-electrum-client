@@ -4,8 +4,8 @@
 
 use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::fmt;
-use std::fmt::{Display, Formatter};
+
+use bitcoin_lib::network::Address;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -16,6 +16,8 @@ use std::time::Duration;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+#[cfg(feature = "use-bitcoincash")]
+use std::fmt::{self, Display};
 
 use bitcoin_lib::consensus::encode::deserialize;
 use bitcoin_lib::hashes::hex::FromHex;
@@ -462,6 +464,7 @@ enum ChannelMessage {
     WakeUp,
     Error(Arc<std::io::Error>),
 }
+#[cfg(feature = "use-bitcoincash")]
 fn lower_hex_string(bytes: &[u8], string: &mut String) {
     use self::fmt::Write;
     string.reserve(0);
@@ -803,8 +806,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             result
                 .as_str()
                 .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
-        )
-        .unwrap())
+        )?)
     }
 
     fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error> {
@@ -820,7 +822,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             let (start, end) = (i * 80, (i + 1) * 80);
             deserialized
                 .headers
-                .push(deserialize(&deserialized.raw_headers[start..end]).unwrap());
+                .push(deserialize(&deserialized.raw_headers[start..end])?);
         }
         deserialized.raw_headers.clear();
 
@@ -1002,10 +1004,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(Vec::<u8>::from_hex(
             result
                 .as_str()
-                .ok_or_else(|| Error::InvalidResponse(result.clone()))
-                .unwrap(),
-        )
-        .unwrap())
+                .ok_or_else(|| Error::InvalidResponse(result.clone()))?,
+        )?)
     }
 
     fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
@@ -1016,7 +1016,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         let txs_string: Result<Vec<String>, Error> = impl_batch_call!(self, txids, transaction_get);
         txs_string?
             .iter()
-            .map(|s| Ok(Vec::<u8>::from_hex(s).unwrap()))
+            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
             .collect()
     }
 
@@ -1029,7 +1029,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             impl_batch_call!(self, heights, block_header, apply_deref);
         headers_string?
             .iter()
-            .map(|s| Ok(Vec::<u8>::from_hex(s).unwrap()))
+            .map(|s| Ok(Vec::<u8>::from_hex(s)?))
             .collect()
     }
 
@@ -1042,22 +1042,22 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
-        let mut params: Vec<Param> = Vec::new();
+        let _params: Vec<Param>;
 
         #[cfg(feature = "use-bitcoin")]
-        let params = vec![Param::String(raw_tx.to_lower_hex_string())];
+        let _params = vec![Param::String(raw_tx.to_lower_hex_string())];
 
         #[cfg(feature = "use-bitcoincash")]
         {
             let mut string = String::new();
             lower_hex_string(raw_tx, &mut string);
-            let params = vec![Param::String(string)];
+            _params = vec![Param::String(string)];
         }
 
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.broadcast",
-            params,
+            _params,
         );
         let result = self.call(req)?;
 
@@ -1108,6 +1108,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 mod test {
     use std::str::FromStr;
 
+    use crate::ListUnspentRes;
+
     use super::RawClient;
     use api::ElectrumApi;
 
@@ -1151,7 +1153,10 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_header(0).unwrap();
-        assert_eq!(resp.version, bitcoin::block::Version::ONE);
+        #[cfg(feature = "use-bitcoin")]
+        assert_eq!(resp.version, bitcoin_lib::block::Version::ONE);
+        #[cfg(feature = "use-bitcoincash")]
+        assert_eq!(resp.version, 1);
         assert_eq!(resp.time, 1231006505);
         assert_eq!(resp.nonce, 0x7c2bac1d);
     }
@@ -1192,9 +1197,11 @@ mod test {
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
-        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr")
-            .unwrap()
-            .assume_checked();
+        let addr = bitcoin_lib::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr").unwrap();
+
+        #[cfg(feature = "use-bitcoin")]
+        let addr = addr.assume_checked();
+
         let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
         assert!(resp.confirmed >= 213091301265);
     }
@@ -1203,12 +1210,12 @@ mod test {
     fn test_script_get_history() {
         use std::str::FromStr;
 
-        use bitcoin::Txid;
+        use bitcoin_lib::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
+        let addr = bitcoin_lib::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
         let resp = client
             .script_get_history(&addr.payload.script_pubkey())
             .unwrap();
@@ -1223,13 +1230,13 @@ mod test {
 
     #[test]
     fn test_script_list_unspent() {
-        use bitcoin::Txid;
+        use bitcoin_lib::Txid;
         use std::str::FromStr;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-        let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko").unwrap();
+        let addr = bitcoin_lib::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko").unwrap();
         let resp = client
             .script_list_unspent(&addr.payload.script_pubkey())
             .unwrap();
@@ -1249,16 +1256,22 @@ mod test {
         use std::str::FromStr;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
-
+        let resp: Vec<Vec<ListUnspentRes>>;
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-        let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+        let script_1 = bitcoin_lib::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
             .unwrap()
             .payload
             .script_pubkey();
-
+        #[cfg(feature = "use-bitcoin")]
         let resp = client
             .batch_script_list_unspent(vec![script_1.as_script()])
             .unwrap();
+        #[cfg(feature = "use-bitcoincash")]
+        {
+            let as_script: &bitcoin_lib::Script =
+                unsafe { &*(script_1.as_ref() as *const [u8] as *const bitcoin_lib::Script) };
+            resp = client.batch_script_list_unspent(vec![as_script]).unwrap();
+        }
         assert_eq!(resp.len(), 1);
         assert!(resp[0].len() >= 9);
     }
@@ -1275,7 +1288,7 @@ mod test {
 
     #[test]
     fn test_transaction_get() {
-        use bitcoin::Txid;
+        use bitcoin_lib::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
@@ -1286,12 +1299,15 @@ mod test {
             )
             .unwrap();
         assert_eq!(resp.version, 1);
+        #[cfg(feature = "use-bitcoin")]
         assert_eq!(resp.lock_time.to_consensus_u32(), 0);
+        #[cfg(feature = "use-bitcoincash")]
+        assert_eq!(resp.lock_time.to_u32(), 0);
     }
 
     #[test]
     fn test_transaction_get_raw() {
-        use bitcoin::Txid;
+        use bitcoin_lib::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
@@ -1325,7 +1341,7 @@ mod test {
 
     #[test]
     fn test_transaction_get_merkle() {
-        use bitcoin::Txid;
+        use bitcoin_lib::Txid;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
@@ -1369,7 +1385,7 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
+        let addr = bitcoin_lib::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
 
         // Just make sure that the call returns Ok(something)
         client
