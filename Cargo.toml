@@ -39,7 +39,7 @@ libc = { version = "0.2", optional = true }
 winapi = { version="0.3.9", features=["winsock2"], optional = true }
 
 [features]
-default = ["proxy", "use-rustls", "use-bitcoin"]
+default = ["proxy", "use-rustls"]
 minimal = []
 debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
