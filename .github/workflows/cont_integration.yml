@@ -3,14 +3,12 @@ on: [push, pull_request]
 name: CI
 
 jobs:
-  example_matrix:
-    strategy:
-      matrix:
-        protocol: [use-bitcoin, use-bitcoincash]
-
   test-fmt:
     name: Test
     runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        protocol: [use-bitcoin, use-bitcoincash]
     env:
       TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
       #TEST_ELECTRUM_SERVER: bitcoin.aranguren.org:50001
