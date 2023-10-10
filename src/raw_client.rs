@@ -1251,30 +1251,28 @@ mod test {
         assert_eq!(txs[0].tx_pos, 1);
     }
 
-    //#[test]
-    //fn test_batch_script_list_unspent() {
-    //    use std::str::FromStr;
-    //
-    //    let client = RawClient::new(get_test_server(), None).unwrap();
-    //    let resp: Vec<Vec<ListUnspentRes>>;
-    //    // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-    //    let script_1 = bitcoin_lib::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
-    //        .unwrap()
-    //        .payload
-    //        .script_pubkey();
-    //    #[cfg(feature = "use-bitcoin")]
-    //    let resp = client
-    //        .batch_script_list_unspent(vec![script_1.as_script()])
-    //        .unwrap();
-    //    #[cfg(feature = "use-bitcoincash")]
-    //    {
-    //        let as_script: &bitcoin_lib::Script =
-    //            unsafe { &*(script_1.as_ref() as *const [u8] as *const bitcoin_lib::Script) };
-    //        resp = client.batch_script_list_unspent(vec![as_script]).unwrap();
-    //    }
-    //    assert_eq!(resp.len(), 1);
-    //    assert!(resp[0].len() >= 9);
-    //}
+    #[test]
+    fn test_batch_script_list_unspent() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+        let resp: Vec<Vec<ListUnspentRes>>;
+        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+        let script_1 = bitcoin_lib::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+            .unwrap()
+            .payload
+            .script_pubkey();
+        #[cfg(feature = "use-bitcoin")]
+        let resp = client
+            .batch_script_list_unspent(vec![script_1.as_script()])
+            .unwrap();
+        #[cfg(feature = "use-bitcoincash")]
+        {
+            resp = client.batch_script_list_unspent(vec![&script_1]).unwrap();
+        }
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0].len() >= 9);
+    }
 
     #[test]
     fn test_batch_estimate_fee() {
