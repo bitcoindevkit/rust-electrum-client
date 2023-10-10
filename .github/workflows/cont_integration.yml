@@ -32,12 +32,12 @@ jobs:
       - name: Fmt
         run: cargo fmt -- --check --verbose
       - name: Test
-        run: cargo test --verbose --features=${{ matrix.protocol }},proxy,use-openssl,use-rustls,debug-calls
+        run: cargo test --verbose --no-default-features --features=${{ matrix.protocol }},proxy,use-openssl,use-rustls,debug-calls
       - name: Setup iptables for the timeout test
         run: sudo ip6tables -I INPUT 1 -p tcp -d ::1 --dport 60000 -j DROP
       - name: Timeout test
         run: cargo test -- --ignored test_local_timeout
-      - run: cargo check --verbose --features=use-openssl,${{ matrix.protocol }}
+      - run: cargo check --verbose --no-default-features --features=use-openssl,${{ matrix.protocol }}
       - run: cargo check --verbose --no-default-features --features=proxy,${{ matrix.protocol }}
       - run: cargo check --verbose --no-default-features --features=minimal,${{ matrix.protocol }}
       - run: cargo check --verbose --no-default-features --features=minimal,debug-calls,${{ matrix.protocol }}
