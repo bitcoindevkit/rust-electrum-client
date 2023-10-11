@@ -10,8 +10,8 @@ jobs:
       matrix:
         protocol: [use-bitcoin, use-bitcoincash]
     env:
-      #TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
-      TEST_ELECTRUM_SERVER: bitcoincash.network:50001
+      TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
+      TEST_ELECTRUM_SERVER_BCH: bitcoincash.network:50001
       #TEST_ELECTRUM_SERVER: bitcoin.aranguren.org:50001
     steps:
       - name: Checkout

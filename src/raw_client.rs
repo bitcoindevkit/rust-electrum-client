@@ -1104,6 +1104,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 }
 
+#[cfg(feature = "use-bitcoin")]
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -1153,10 +1154,7 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.block_header(0).unwrap();
-        #[cfg(feature = "use-bitcoin")]
         assert_eq!(resp.version, bitcoin_lib::block::Version::ONE);
-        #[cfg(feature = "use-bitcoincash")]
-        assert_eq!(resp.version, 1);
         assert_eq!(resp.time, 1231006505);
         assert_eq!(resp.nonce, 0x7c2bac1d);
     }
@@ -1197,11 +1195,9 @@ mod test {
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
-        let addr = bitcoin_lib::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr").unwrap();
-
-        #[cfg(feature = "use-bitcoin")]
-        let addr = addr.assume_checked();
-
+        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr")
+            .unwrap()
+            .assume_checked();
         let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
         assert!(resp.confirmed >= 213091301265);
     }
@@ -1256,20 +1252,16 @@ mod test {
         use std::str::FromStr;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
-        let resp: Vec<Vec<ListUnspentRes>>;
+
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let script_1 = bitcoin_lib::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
             .unwrap()
             .payload
             .script_pubkey();
-        #[cfg(feature = "use-bitcoin")]
+
         let resp = client
             .batch_script_list_unspent(vec![script_1.as_script()])
             .unwrap();
-        #[cfg(feature = "use-bitcoincash")]
-        {
-            resp = client.batch_script_list_unspent(vec![&script_1]).unwrap();
-        }
         assert_eq!(resp.len(), 1);
         assert!(resp[0].len() >= 9);
     }
@@ -1297,10 +1289,7 @@ mod test {
             )
             .unwrap();
         assert_eq!(resp.version, 1);
-        #[cfg(feature = "use-bitcoin")]
         assert_eq!(resp.lock_time.to_consensus_u32(), 0);
-        #[cfg(feature = "use-bitcoincash")]
-        assert_eq!(resp.lock_time.to_u32(), 0);
     }
 
     #[test]
@@ -1428,6 +1417,302 @@ mod test {
             21d7ec3f45a5eca89d3ea6a294cdf3a042e973009584470a12916111e2caa01200\
             000000000000000000000000000000000000000000000000000000000000000000\
             00000"
+        )
+    }
+}
+#[cfg(feature = "use-bitcoincash")]
+#[cfg(test)]
+mod test {
+    use std::str::FromStr;
+
+    use crate::ListUnspentRes;
+
+    use super::RawClient;
+    use api::ElectrumApi;
+
+    fn get_test_server() -> String {
+        std::env::var("TEST_ELECTRUM_SERVER_BCH").unwrap_or("bitcoincash.network:50001".into())
+    }
+
+    #[test]
+    fn test_server_features_simple() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.server_features().unwrap();
+        assert_eq!(
+            resp.genesis_hash,
+            [
+                0, 0, 0, 0, 0, 25, 214, 104, 156, 8, 90, 225, 101, 131, 30, 147, 79, 247, 99, 174,
+                70, 162, 166, 193, 114, 179, 241, 182, 10, 140, 226, 111
+            ],
+        );
+        assert_eq!(resp.hash_function, Some("sha256".into()));
+        assert_eq!(resp.pruning, None);
+    }
+    #[test]
+    fn test_relay_fee() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.relay_fee().unwrap();
+        assert_eq!(resp, 0.00001);
+    }
+
+    #[test]
+    fn test_estimate_fee() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.estimate_fee(10).unwrap();
+        assert!(resp > 0.0);
+    }
+
+    #[test]
+    fn test_block_header() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.block_header(0).unwrap();
+        assert_eq!(resp.version, 1);
+        assert_eq!(resp.time, 1231006505);
+        assert_eq!(resp.nonce, 0x7c2bac1d);
+    }
+
+    #[test]
+    fn test_block_header_raw() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.block_header_raw(0).unwrap();
+        assert_eq!(
+            resp,
+            vec![
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 59, 163, 237, 253, 122, 123, 18, 178, 122, 199, 44, 62,
+                103, 118, 143, 97, 127, 200, 27, 195, 136, 138, 81, 50, 58, 159, 184, 170, 75, 30,
+                94, 74, 41, 171, 95, 73, 255, 255, 0, 29, 29, 172, 43, 124
+            ]
+        );
+    }
+
+    #[test]
+    fn test_block_headers() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.block_headers(0, 4).unwrap();
+        assert_eq!(resp.count, 4);
+        assert_eq!(resp.max, 2016);
+        assert_eq!(resp.headers.len(), 4);
+
+        assert_eq!(resp.headers[0].time, 1231006505);
+    }
+
+    #[test]
+    fn test_script_get_balance() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+        let addr = bitcoin_lib::Address::from_str("1FoC7PjAqmeUQMdjWqTF5DSXxdgiQuSvBp").unwrap();
+
+        let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
+        assert!(resp.confirmed >= 18133304225);
+    }
+
+    #[test]
+    fn test_script_get_history() {
+        use std::str::FromStr;
+
+        use bitcoin_lib::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let addr = bitcoin_lib::Address::from_str("1FoC7PjAqmeUQMdjWqTF5DSXxdgiQuSvBp").unwrap();
+        let resp = client
+            .script_get_history(&addr.payload.script_pubkey())
+            .unwrap();
+
+        assert!(resp.len() >= 127);
+        assert_eq!(
+            resp[0].tx_hash,
+            Txid::from_str("14998f416e453438234c3bcbed6c1914665eb8d4956ba1688b864f7c47a9f9df")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_script_list_unspent() {
+        use bitcoin_lib::Txid;
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+        let addr = bitcoin_lib::Address::from_str("1FoC7PjAqmeUQMdjWqTF5DSXxdgiQuSvBp").unwrap();
+        let resp = client
+            .script_list_unspent(&addr.payload.script_pubkey())
+            .unwrap();
+
+        assert!(resp.len() >= 9);
+        let txid = "3212dc01618eebbd4f4b8753441de888b8161f1b3604dda69e5707ef93a66829";
+        let txid = Txid::from_str(txid).unwrap();
+        let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].value, 625034260);
+        assert_eq!(txs[0].height, 814544);
+        assert_eq!(txs[0].tx_pos, 0);
+    }
+
+    #[test]
+    fn test_batch_script_list_unspent() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+        let script_1 = bitcoin_lib::Address::from_str("1FoC7PjAqmeUQMdjWqTF5DSXxdgiQuSvBp")
+            .unwrap()
+            .payload
+            .script_pubkey();
+
+        let resp = client.batch_script_list_unspent(vec![&script_1]).unwrap();
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0].len() >= 27);
+    }
+
+    #[test]
+    fn test_batch_estimate_fee() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
+        assert_eq!(resp.len(), 2);
+        assert!(resp[0] > 0.0);
+        assert!(resp[1] > 0.0);
+    }
+
+    #[test]
+    fn test_transaction_get() {
+        use bitcoin_lib::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client
+            .transaction_get(
+                &Txid::from_str("3212dc01618eebbd4f4b8753441de888b8161f1b3604dda69e5707ef93a66829")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(resp.version, 1);
+        assert_eq!(resp.lock_time.to_u32(), 0);
+    }
+
+    #[test]
+    fn test_transaction_get_raw() {
+        use bitcoin_lib::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client
+            .transaction_get_raw(
+                &Txid::from_str("3212dc01618eebbd4f4b8753441de888b8161f1b3604dda69e5707ef93a66829")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            resp,
+            vec![
+                1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 82, 3, 208, 109, 12, 4, 65, 111, 38,
+                101, 8, 250, 190, 109, 109, 80, 99, 202, 97, 226, 170, 162, 110, 5, 76, 113, 212,
+                151, 32, 166, 9, 195, 140, 90, 61, 93, 173, 246, 19, 191, 92, 166, 91, 153, 108,
+                69, 136, 0, 1, 0, 0, 0, 0, 0, 0, 1, 125, 208, 213, 83, 240, 43, 0, 153, 0, 17, 47,
+                77, 105, 110, 105, 110, 103, 45, 68, 117, 116, 99, 104, 47, 45, 51, 49, 0, 0, 0, 0,
+                1, 20, 68, 65, 37, 0, 0, 0, 0, 25, 118, 169, 20, 162, 78, 43, 103, 104, 156, 55,
+                83, 152, 61, 59, 64, 139, 199, 105, 13, 49, 177, 183, 77, 136, 172, 0, 0, 0, 0
+            ]
+        )
+    }
+
+    #[test]
+    fn test_transaction_get_merkle() {
+        use bitcoin_lib::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let resp = client
+            .transaction_get_merkle(
+                &Txid::from_str("3212dc01618eebbd4f4b8753441de888b8161f1b3604dda69e5707ef93a66829")
+                    .unwrap(),
+                814544,
+            )
+            .unwrap();
+        assert_eq!(resp.block_height, 814544);
+        assert_eq!(resp.pos, 0);
+        assert_eq!(resp.merkle.len(), 5);
+        assert_eq!(
+            resp.merkle[0],
+            [
+                6, 211, 143, 70, 101, 4, 52, 149, 105, 94, 251, 121, 176, 149, 130, 175, 203, 109,
+                48, 109, 51, 12, 212, 15, 43, 222, 246, 216, 170, 97, 224, 7
+            ]
+        );
+    }
+
+    #[test]
+    fn test_ping() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+        client.ping().unwrap();
+    }
+
+    #[test]
+    fn test_block_headers_subscribe() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+        let resp = client.block_headers_subscribe().unwrap();
+
+        assert!(resp.height >= 814551);
+    }
+
+    #[test]
+    fn test_script_subscribe() {
+        use std::str::FromStr;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let addr = bitcoin_lib::Address::from_str("1FoC7PjAqmeUQMdjWqTF5DSXxdgiQuSvBp").unwrap();
+
+        // Just make sure that the call returns Ok(something)
+        client
+            .script_subscribe(&addr.payload.script_pubkey())
+            .unwrap();
+    }
+
+    #[test]
+    fn test_request_after_error() {
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
+        assert!(client.server_features().is_ok());
+    }
+
+    #[test]
+    fn test_raw_call() {
+        use types::Param;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let params = vec![
+            Param::String(
+                "3212dc01618eebbd4f4b8753441de888b8161f1b3604dda69e5707ef93a66829".to_string(),
+            ),
+            Param::Bool(false),
+        ];
+
+        let resp = client
+            .raw_call("blockchain.transaction.get", params)
+            .unwrap();
+
+        assert_eq!(
+            resp,
+            "010000000100000000000000000000000000000000000000000000000000000000\
+            00000000ffffffff5203d06d0c04416f266508fabe6d6d5063ca61e2aaa26e054c7\
+            1d49720a609c38c5a3d5dadf613bf5ca65b996c45880001000000000000017dd0d5\
+            53f02b009900112f4d696e696e672d44757463682f2d33310000000001144441250\
+            00000001976a914a24e2b67689c3753983d3b408bc7690d31b1b74d88ac00000000"
         )
     }
 }
