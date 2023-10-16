@@ -16,9 +16,8 @@ use std::time::Duration;
 use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
+use bitcoin::hex::{DisplayHex, FromHex};
 use bitcoin::{Script, Txid};
-use bitcoin_private::hex::exts::DisplayHex;
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -1179,10 +1178,10 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
-        let resp = client
-            .script_get_history(&addr.payload.script_pubkey())
-            .unwrap();
+        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+            .unwrap()
+            .assume_checked();
+        let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
 
         assert!(resp.len() >= 328);
         assert_eq!(
@@ -1200,10 +1199,10 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-        let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko").unwrap();
-        let resp = client
-            .script_list_unspent(&addr.payload.script_pubkey())
-            .unwrap();
+        let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+            .unwrap()
+            .assume_checked();
+        let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
 
         assert!(resp.len() >= 9);
         let txid = "397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0";
@@ -1224,7 +1223,7 @@ mod test {
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
             .unwrap()
-            .payload
+            .assume_checked()
             .script_pubkey();
 
         let resp = client
@@ -1246,7 +1245,7 @@ mod test {
 
     #[test]
     fn test_transaction_get() {
-        use bitcoin::Txid;
+        use bitcoin::{transaction, Txid};
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
@@ -1256,7 +1255,7 @@ mod test {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(resp.version, 1);
+        assert_eq!(resp.version, transaction::Version::ONE);
         assert_eq!(resp.lock_time.to_consensus_u32(), 0);
     }
 
@@ -1340,12 +1339,12 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF").unwrap();
+        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+            .unwrap()
+            .assume_checked();
 
         // Just make sure that the call returns Ok(something)
-        client
-            .script_subscribe(&addr.payload.script_pubkey())
-            .unwrap();
+        client.script_subscribe(&addr.script_pubkey()).unwrap();
     }
 
     #[test]
