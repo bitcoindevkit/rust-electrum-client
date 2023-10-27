@@ -1079,6 +1079,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 mod test {
     use std::str::FromStr;
 
+    use crate::utils;
+
     use super::RawClient;
     use api::ElectrumApi;
 
@@ -1300,23 +1302,43 @@ mod test {
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 
-        let resp = client
-            .transaction_get_merkle(
-                &Txid::from_str("cc2ca076fd04c2aeed6d02151c447ced3d09be6fb4d4ef36cb5ed4e7a3260566")
-                    .unwrap(),
-                630000,
-            )
-            .unwrap();
+        let txid =
+            Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
+                .unwrap();
+        let resp = client.transaction_get_merkle(&txid, 630000).unwrap();
         assert_eq!(resp.block_height, 630000);
-        assert_eq!(resp.pos, 0);
+        assert_eq!(resp.pos, 68);
         assert_eq!(resp.merkle.len(), 12);
         assert_eq!(
             resp.merkle[0],
             [
-                30, 10, 161, 245, 132, 125, 136, 198, 186, 138, 107, 216, 92, 22, 145, 81, 130,
-                126, 200, 65, 121, 158, 105, 111, 38, 151, 38, 147, 144, 224, 5, 218
+                34, 65, 51, 64, 49, 139, 115, 189, 185, 246, 70, 225, 168, 193, 217, 195, 47, 66,
+                179, 240, 153, 24, 114, 215, 144, 196, 212, 41, 39, 155, 246, 25
             ]
         );
+
+        // Check we can verify the merkle proof validity, but fail if we supply wrong data.
+        let block_header = client.block_header(resp.block_height).unwrap();
+        assert!(utils::validate_merkle_proof(
+            &txid,
+            &block_header.merkle_root,
+            &resp
+        ));
+
+        let mut fail_resp = resp.clone();
+        fail_resp.pos = 13;
+        assert!(!utils::validate_merkle_proof(
+            &txid,
+            &block_header.merkle_root,
+            &fail_resp
+        ));
+
+        let fail_block_header = client.block_header(resp.block_height + 1).unwrap();
+        assert!(!utils::validate_merkle_proof(
+            &txid,
+            &fail_block_header.merkle_root,
+            &resp
+        ));
     }
 
     #[test]
