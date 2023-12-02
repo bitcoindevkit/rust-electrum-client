@@ -204,6 +204,9 @@ impl Socks5Stream {
             TcpStream::connect(proxy)?
         };
 
+        socket.set_read_timeout(timeout)?;
+        socket.set_write_timeout(timeout)?;
+
         let target = target.to_target_addr()?;
 
         let packet_len = if auth.is_no_auth() { 3 } else { 4 };
