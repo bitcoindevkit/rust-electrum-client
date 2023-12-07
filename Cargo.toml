@@ -26,8 +26,7 @@ serde_json = { version = "^1.0" }
 # Optional dependencies
 openssl = { version = "0.10", optional = true }
 rustls = { version = "0.21", optional = true, features = ["dangerous_configuration"] }
-webpki = { version = "0.22", optional = true }
-webpki-roots = { version = "0.22", optional = true }
+webpki-roots = { version = "0.25", optional = true }
 
 byteorder = { version = "1.0", optional = true }
 
@@ -42,5 +41,5 @@ default = ["proxy", "use-rustls"]
 minimal = []
 debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
-use-rustls = ["webpki", "webpki-roots", "rustls"]
+use-rustls = ["webpki-roots", "rustls"]
 use-openssl = ["openssl"]

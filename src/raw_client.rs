@@ -365,7 +365,7 @@ impl RawClient<ElectrumSslStream> {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
             let mut store = RootCertStore::empty();
-            store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.into_iter().map(|t| {
+            store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.into_iter().map(|t| {
                 OwnedTrustAnchor::from_subject_spki_name_constraints(
                     t.subject,
                     t.spki,
