@@ -161,7 +161,7 @@ where
 }
 
 /// Response to a [`script_get_history`](../client/struct.Client.html#method.script_get_history) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct GetHistoryRes {
     /// Confirmation height of the transaction. 0 if unconfirmed, -1 if unconfirmed while some of
     /// its inputs are unconfirmed too.
@@ -173,7 +173,7 @@ pub struct GetHistoryRes {
 }
 
 /// Response to a [`script_list_unspent`](../client/struct.Client.html#method.script_list_unspent) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ListUnspentRes {
     /// Confirmation height of the transaction that created this output.
     pub height: usize,
@@ -186,7 +186,7 @@ pub struct ListUnspentRes {
 }
 
 /// Response to a [`server_features`](../client/struct.Client.html#method.server_features) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ServerFeaturesRes {
     /// Server version reported.
     pub server_version: String,
@@ -204,7 +204,7 @@ pub struct ServerFeaturesRes {
 }
 
 /// Response to a [`server_features`](../client/struct.Client.html#method.server_features) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct GetHeadersRes {
     /// Maximum number of headers returned in a single response.
     pub max: usize,
@@ -219,7 +219,7 @@ pub struct GetHeadersRes {
 }
 
 /// Response to a [`script_get_balance`](../client/struct.Client.html#method.script_get_balance) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct GetBalanceRes {
     /// Confirmed balance in Satoshis for the address.
     pub confirmed: u64,
@@ -230,7 +230,7 @@ pub struct GetBalanceRes {
 }
 
 /// Response to a [`transaction_get_merkle`](../client/struct.Client.html#method.transaction_get_merkle) request.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct GetMerkleRes {
     /// Height of the block that confirmed the transaction
     pub block_height: usize,
@@ -242,7 +242,7 @@ pub struct GetMerkleRes {
 }
 
 /// Notification of a new block header
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct HeaderNotification {
     /// New block height.
     pub height: usize,
@@ -252,7 +252,7 @@ pub struct HeaderNotification {
 }
 
 /// Notification of a new block header with the header encoded as raw bytes
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct RawHeaderNotification {
     /// New block height.
     pub height: usize,
@@ -273,7 +273,7 @@ impl TryFrom<RawHeaderNotification> for HeaderNotification {
 }
 
 /// Notification of the new status of a script
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct ScriptNotification {
     /// Address that generated this notification.
     pub scripthash: ScriptHash,
