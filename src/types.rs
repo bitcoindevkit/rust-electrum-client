@@ -9,11 +9,10 @@ use std::sync::Arc;
 
 use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::hashes::hex::FromHex;
 use bitcoin::hashes::{sha256, Hash};
+use bitcoin::hex::{DisplayHex, FromHex};
 use bitcoin::{Script, Txid};
 
-use bitcoin_private::hex::exts::DisplayHex;
 use serde::{de, Deserialize, Serialize};
 
 static JSONRPC_2_0: &str = "2.0";
@@ -288,8 +287,8 @@ pub enum Error {
     IOError(std::io::Error),
     /// Wraps `serde_json::error::Error`
     JSON(serde_json::error::Error),
-    /// Wraps `bitcoin::hashes::hex::Error`
-    Hex(bitcoin::hashes::hex::Error),
+    /// Wraps `bitcoin::hex::HexToBytesError`
+    Hex(bitcoin::hex::HexToBytesError),
     /// Error returned by the Electrum server
     Protocol(serde_json::Value),
     /// Error during the deserialization of a Bitcoin data structure
@@ -382,7 +381,7 @@ macro_rules! impl_error {
 
 impl_error!(std::io::Error, IOError);
 impl_error!(serde_json::Error, JSON);
-impl_error!(bitcoin::hashes::hex::Error, Hex);
+impl_error!(bitcoin::hex::HexToBytesError, Hex);
 impl_error!(bitcoin::consensus::encode::Error, Bitcoin);
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
