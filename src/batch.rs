@@ -21,6 +21,11 @@ pub struct Batch {
 }
 
 impl Batch {
+    /// Add a raw request to the batch queue
+    pub fn raw(&mut self, method: String, params: Vec<Param>) {
+        self.calls.push((method, params));
+    }
+
     /// Add one `blockchain.scripthash.listunspent` request to the batch queue
     pub fn script_list_unspent(&mut self, script: &Script) {
         let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];

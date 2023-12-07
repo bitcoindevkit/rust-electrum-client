@@ -1,5 +1,11 @@
 use std::time::Duration;
 
+/// Configuration for an electrum client
+///
+/// Refer to [`Client::from_config`] and [`ClientType::from_config`].
+///
+/// [`Client::from_config`]: crate::Client::from_config
+/// [`ClientType::from_config`]: crate::ClientType::from_config
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Proxy socks5 configuration, default None
@@ -97,19 +103,35 @@ impl Socks5Config {
 }
 
 impl Config {
+    /// Get the configuration for `socks5`
+    ///
+    /// Set this with [`ConfigBuilder::socks5`]
     pub fn socks5(&self) -> &Option<Socks5Config> {
         &self.socks5
     }
+
+    /// Get the configuration for `retry`
+    ///
+    /// Set this with [`ConfigBuilder::retry`]
     pub fn retry(&self) -> u8 {
         self.retry
     }
+
+    /// Get the configuration for `timeout`
+    ///
+    /// Set this with [`ConfigBuilder::timeout`]
     pub fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
+
+    /// Get the configuration for `validate_domain`
+    ///
+    /// Set this with [`ConfigBuilder::validate_domain`]
     pub fn validate_domain(&self) -> bool {
         self.validate_domain
     }
 
+    /// Convenience method for calling [`ConfigBuilder::new`]
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
     }
