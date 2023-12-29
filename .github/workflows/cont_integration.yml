@@ -3,13 +3,17 @@ on: [push, pull_request]
 name: CI
 
 jobs:
-
   test-fmt:
     name: Test
     runs-on: ubuntu-20.04
     env:
       TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
       #TEST_ELECTRUM_SERVER: bitcoin.aranguren.org:50001
+    strategy:
+      matrix:
+        rust:
+          - stable # STABLE
+          - 1.63.0 # MSRV
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -24,7 +28,7 @@ jobs:
       - name: Install rustup
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - name: Set default toolchain
-        run: $HOME/.cargo/bin/rustup default stable
+        run: $HOME/.cargo/bin/rustup default ${{ matrix.rust }}
       - name: Set profile
         run: $HOME/.cargo/bin/rustup set profile minimal
       - name: Fmt
