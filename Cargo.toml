@@ -1,6 +1,6 @@
 [package]
 name = "electrum-client"
-version = "0.19.0"
+version = "0.20.0"
 authors = ["Alekos Filini <alekos.filini@gmail.com>"]
 license = "MIT"
 homepage = "https://github.com/MagicalBitcoin/rust-electrum-client"
@@ -18,7 +18,7 @@ path = "src/lib.rs"
 
 [dependencies]
 log = "^0.4"
-bitcoin = { version = "0.31.0", features = ["serde"] }
+bitcoin = { version = "0.32.0-rc1", features = ["serde"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
 
@@ -42,3 +42,27 @@ debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
 use-rustls = ["webpki-roots", "rustls"]
 use-openssl = ["openssl"]
+
+[patch.crates-io.base58ck]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
+
+[patch.crates-io.bitcoin]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
+
+[patch.crates-io.bitcoin_hashes]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
+
+[patch.crates-io.bitcoin-internals]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
+
+[patch.crates-io.bitcoin-io]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
+
+[patch.crates-io.bitcoin-units]
+git = "https://github.com/rust-bitcoin/rust-bitcoin"
+branch = "rc1-fixes"
