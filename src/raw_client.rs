@@ -21,12 +21,15 @@ use bitcoin::{Script, Txid};
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
+
 #[cfg(all(
     any(feature = "default", feature = "use-rustls"),
     not(feature = "use-openssl")
 ))]
 use rustls::{
-    ClientConfig, ClientConnection, OwnedTrustAnchor, RootCertStore, ServerName, StreamOwned,
+    pki_types::ServerName,
+    pki_types::{Der, TrustAnchor},
+    ClientConfig, ClientConnection, RootCertStore, StreamOwned,
 };
 
 #[cfg(any(feature = "default", feature = "proxy"))]
@@ -287,24 +290,47 @@ impl RawClient<ElectrumSslStream> {
     not(feature = "use-openssl")
 ))]
 mod danger {
-    use rustls;
-    use rustls::client::ServerCertVerified;
-    use rustls::{Certificate, Error, ServerName};
-    use std::time::SystemTime;
+    use raw_client::ServerName;
+    use rustls::client::danger::ServerCertVerified;
+    use rustls::pki_types::CertificateDer;
+    use rustls::pki_types::UnixTime;
+    use rustls::Error;
 
+    #[derive(Debug)]
     pub struct NoCertificateVerification {}
 
-    impl rustls::client::ServerCertVerifier for NoCertificateVerification {
+    impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         fn verify_server_cert(
             &self,
-            _end_entity: &Certificate,
-            _intermediates: &[Certificate],
+            _end_entity: &CertificateDer,
+            _intermediates: &[CertificateDer],
             _server_name: &ServerName,
-            _scts: &mut dyn Iterator<Item = &[u8]>,
             _ocsp_response: &[u8],
-            _now: SystemTime,
+            _now: UnixTime,
         ) -> Result<ServerCertVerified, Error> {
             Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![]
         }
     }
 }
@@ -358,24 +384,25 @@ impl RawClient<ElectrumSslStream> {
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
-        let builder = ClientConfig::builder().with_safe_defaults();
+        let builder = ClientConfig::builder();
 
         let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
-            let mut store = RootCertStore::empty();
-            store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.into_iter().map(|t| {
-                OwnedTrustAnchor::from_subject_spki_name_constraints(
-                    t.subject,
-                    t.spki,
-                    t.name_constraints,
-                )
-            }));
+            let store = webpki_roots::TLS_SERVER_ROOTS
+                .into_iter()
+                .map(|t| TrustAnchor {
+                    subject: Der::from_slice(t.subject),
+                    subject_public_key_info: Der::from_slice(t.spki),
+                    name_constraints: t.name_constraints.map(|nc| Der::from_slice(nc)),
+                })
+                .collect::<RootCertStore>();
 
             // TODO: cert pinning
             builder.with_root_certificates(store).with_no_client_auth()
         } else {
             builder
+                .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
                     danger::NoCertificateVerification {},
                 ))
@@ -385,7 +412,7 @@ impl RawClient<ElectrumSslStream> {
         let domain = socket_addr.domain().unwrap_or("NONE").to_string();
         let session = ClientConnection::new(
             std::sync::Arc::new(config),
-            ServerName::try_from(domain.as_str())
+            ServerName::try_from(domain.clone())
                 .map_err(|_| Error::InvalidDNSNameError(domain.clone()))?,
         )
         .map_err(Error::CouldNotCreateConnection)?;
