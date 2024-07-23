@@ -4,7 +4,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{Script, Txid};
+use bitcoin::{FeeRate, Script, Txid};
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
@@ -207,12 +207,12 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
+    fn estimate_fee(&self, number: usize) -> Result<FeeRate, Error> {
         impl_inner_call!(self, estimate_fee, number)
     }
 
     #[inline]
-    fn relay_fee(&self) -> Result<f64, Error> {
+    fn relay_fee(&self) -> Result<FeeRate, Error> {
         impl_inner_call!(self, relay_fee)
     }
 
@@ -309,7 +309,7 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
+    fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<FeeRate>, Error>
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<usize>,

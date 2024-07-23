@@ -1,10 +1,12 @@
 //! Utilities helping to handle Electrum-related data.
 
 use crate::types::GetMerkleRes;
+use crate::Error;
 use bitcoin::hash_types::TxMerkleNode;
 use bitcoin::hashes::sha256d::Hash as Sha256d;
 use bitcoin::hashes::{Hash, HashEngine};
-use bitcoin::Txid;
+use bitcoin::{Amount, FeeRate, Txid};
+use serde_json::Value;
 
 /// Verifies a Merkle inclusion proof as retrieved via [`transaction_get_merkle`] for a transaction with the
 /// given `txid` and `merkle_root` as included in the [`BlockHeader`].
@@ -40,4 +42,20 @@ pub fn validate_merkle_proof(
     }
 
     cur == merkle_root.to_raw_hash()
+}
+
+/// Converts a fee rate in BTC/kB to sats/vbyte.
+pub(crate) fn convert_fee_rate(fee_rate_kvb: Value) -> Result<FeeRate, Error> {
+    let fee_rate_kvb = match fee_rate_kvb.as_f64() {
+        Some(fee_rate_kvb) => fee_rate_kvb,
+        None => {
+            return Err(Error::FeeRate("Fee rate conversion failed".to_string()));
+        }
+    };
+    let fee_rate_sat_vb = (Amount::ONE_BTC.to_sat() as f64) * fee_rate_kvb;
+    let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_vb as u64);
+    match fee_rate {
+        Some(fee_rate) => Ok(fee_rate),
+        None => Err(Error::FeeRate("Fee rate conversion failed".to_string())),
+    }
 }
