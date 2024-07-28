@@ -110,6 +110,28 @@ impl ClientType {
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
+
+            #[cfg(all(
+                any(feature = "use-rustls", feature = "use-rustls-ring"),
+                not(feature = "use-openssl")
+            ))]
+            let client = match config.socks5() {
+                Some(socks5) => RawClient::new_proxy_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    socks5,
+                    config.timeout(),
+                    config.crypto_provider(),
+                )?,
+                None => RawClient::new_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    config.timeout(),
+                    config.crypto_provider(),
+                )?,
+            };
+
+            #[cfg(feature = "openssl")]
             let client = match config.socks5() {
                 Some(socks5) => RawClient::new_proxy_ssl(
                     url.as_str(),
@@ -117,6 +139,7 @@ impl ClientType {
                     socks5,
                     config.timeout(),
                 )?,
+
                 None => {
                     RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
                 }
