@@ -2,7 +2,7 @@
 
 use bitcoin::hash_types::TxMerkleNode;
 use bitcoin::hashes::sha256d::Hash as Sha256d;
-use bitcoin::hashes::Hash;
+use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::Txid;
 use types::GetMerkleRes;
 
@@ -21,21 +21,21 @@ pub fn validate_merkle_proof(
 ) -> bool {
     let mut index = merkle_res.pos;
     let mut cur = txid.to_raw_hash();
-    for bytes in &merkle_res.merkle {
-        let mut reversed = [0u8; 32];
-        reversed.copy_from_slice(bytes);
-        reversed.reverse();
-        // unwrap() safety: `reversed` has len 32 so `from_slice` can never fail.
-        let next_hash = Sha256d::from_slice(&reversed).unwrap();
+    for mut bytes in merkle_res.merkle.iter().cloned() {
+        bytes.reverse();
+        let next_hash = Sha256d::from_byte_array(bytes);
 
-        let (left, right) = if index % 2 == 0 {
-            (cur, next_hash)
-        } else {
-            (next_hash, cur)
-        };
-
-        let data = [&left[..], &right[..]].concat();
-        cur = Sha256d::hash(&data);
+        cur = Sha256d::from_engine({
+            let mut engine = Sha256d::engine();
+            if index % 2 == 0 {
+                engine.input(cur.as_ref());
+                engine.input(next_hash.as_ref());
+            } else {
+                engine.input(next_hash.as_ref());
+                engine.input(cur.as_ref());
+            };
+            engine
+        });
         index /= 2;
     }
 
