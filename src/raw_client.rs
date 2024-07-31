@@ -39,11 +39,11 @@ use rustls::{
 #[cfg(any(feature = "default", feature = "proxy"))]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
-use stream::ClonableStream;
+use crate::stream::ClonableStream;
 
-use api::ElectrumApi;
-use batch::Batch;
-use types::*;
+use crate::api::ElectrumApi;
+use crate::batch::Batch;
+use crate::types::*;
 
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
@@ -298,7 +298,7 @@ impl RawClient<ElectrumSslStream> {
     not(feature = "use-openssl")
 ))]
 mod danger {
-    use raw_client::ServerName;
+    use crate::raw_client::ServerName;
     use rustls::client::danger::ServerCertVerified;
     use rustls::pki_types::CertificateDer;
     use rustls::pki_types::UnixTime;

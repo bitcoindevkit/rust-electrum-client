@@ -1,10 +1,10 @@
 //! Utilities helping to handle Electrum-related data.
 
+use crate::types::GetMerkleRes;
 use bitcoin::hash_types::TxMerkleNode;
 use bitcoin::hashes::sha256d::Hash as Sha256d;
 use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::Txid;
-use types::GetMerkleRes;
 
 /// Verifies a Merkle inclusion proof as retrieved via [`transaction_get_merkle`] for a transaction with the
 /// given `txid` and `merkle_root` as included in the [`BlockHeader`].
