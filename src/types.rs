@@ -315,8 +315,7 @@ pub enum Error {
     CouldntLockReader,
     /// Broken IPC communication channel: the other thread probably has exited
     Mpsc,
-
-    #[cfg(feature = "use-rustls")]
+    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
     /// Could not create a rustls client connection
     CouldNotCreateConnection(rustls::Error),
 
@@ -340,7 +339,10 @@ impl Display for Error {
             Error::SslHandshakeError(e) => Display::fmt(e, f),
             #[cfg(feature = "use-openssl")]
             Error::InvalidSslMethod(e) => Display::fmt(e, f),
-            #[cfg(feature = "use-rustls")]
+            #[cfg(any(
+                feature = "use-rustls",
+                feature = "use-rustls-ring",
+            ))]
             Error::CouldNotCreateConnection(e) => Display::fmt(e, f),
 
             Error::Message(e) => f.write_str(e),

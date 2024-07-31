@@ -23,7 +23,11 @@ use bitcoin::{Script, Txid};
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
 
 #[cfg(all(
-    any(feature = "default", feature = "use-rustls"),
+    any(
+        feature = "default",
+        feature = "use-rustls",
+        feature = "use-rustls-ring"
+    ),
     not(feature = "use-openssl")
 ))]
 use rustls::{
@@ -286,7 +290,11 @@ impl RawClient<ElectrumSslStream> {
 }
 
 #[cfg(all(
-    any(feature = "default", feature = "use-rustls"),
+    any(
+        feature = "default",
+        feature = "use-rustls",
+        feature = "use-rustls-ring"
+    ),
     not(feature = "use-openssl")
 ))]
 mod danger {
@@ -336,13 +344,21 @@ mod danger {
 }
 
 #[cfg(all(
-    any(feature = "default", feature = "use-rustls"),
+    any(
+        feature = "default",
+        feature = "use-rustls",
+        feature = "use-rustls-ring"
+    ),
     not(feature = "use-openssl")
 ))]
 /// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
 pub type ElectrumSslStream = StreamOwned<ClientConnection, TcpStream>;
 #[cfg(all(
-    any(feature = "default", feature = "use-rustls"),
+    any(
+        feature = "default",
+        feature = "use-rustls",
+        feature = "use-rustls-ring"
+    ),
     not(feature = "use-openssl")
 ))]
 impl RawClient<ElectrumSslStream> {
@@ -451,7 +467,11 @@ impl RawClient<ElectrumProxyStream> {
         Ok(stream.into())
     }
 
-    #[cfg(any(feature = "use-openssl", feature = "use-rustls"))]
+    #[cfg(any(
+        feature = "use-openssl",
+        feature = "use-rustls",
+        feature = "use-rustls-ring"
+    ))]
     /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
     /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
     /// allows to specify, for instance, `.onion` addresses.
