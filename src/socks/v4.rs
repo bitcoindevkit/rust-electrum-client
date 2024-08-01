@@ -109,7 +109,7 @@ impl Socks4Stream {
                 let _ = packet.write_u32::<BigEndian>(Ipv4Addr::new(0, 0, 0, 1).into());
                 let _ = packet.write_all(userid.as_bytes());
                 let _ = packet.write_u8(0);
-                let _ = packet.extend(host.as_bytes());
+                packet.extend(host.as_bytes());
                 let _ = packet.write_u8(0);
             }
         }
@@ -118,8 +118,8 @@ impl Socks4Stream {
         let proxy_addr = read_response(&mut socket)?;
 
         Ok(Socks4Stream {
-            socket: socket,
-            proxy_addr: proxy_addr,
+            socket,
+            proxy_addr,
         })
     }
 

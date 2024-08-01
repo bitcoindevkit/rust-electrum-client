@@ -110,7 +110,7 @@ fn write_addr(mut packet: &mut [u8], target: &TargetAddr) -> io::Result<usize> {
         }
         TargetAddr::Domain(ref domain, port) => {
             packet.write_u8(3).unwrap();
-            if domain.len() > u8::max_value() as usize {
+            if domain.len() > u8::MAX as usize {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "domain name too long",
@@ -144,11 +144,7 @@ impl<'a> Authentication<'a> {
     }
 
     fn is_no_auth(&self) -> bool {
-        if let Authentication::None = *self {
-            true
-        } else {
-            false
-        }
+        matches!(*self, Authentication::None)
     }
 }
 
@@ -258,8 +254,8 @@ impl Socks5Stream {
         let proxy_addr = read_response(&mut socket)?;
 
         Ok(Socks5Stream {
-            socket: socket,
-            proxy_addr: proxy_addr,
+            socket,
+            proxy_addr,
         })
     }
 
@@ -268,13 +264,13 @@ impl Socks5Stream {
         username: &str,
         password: &str,
     ) -> io::Result<()> {
-        if username.len() < 1 || username.len() > 255 {
+        if username.is_empty() || username.len() > 255 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid username",
             ));
         };
-        if password.len() < 1 || password.len() > 255 {
+        if password.is_empty() || password.len() > 255 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid password",
@@ -475,8 +471,8 @@ impl Socks5Datagram {
         socket.connect(&stream.proxy_addr)?;
 
         Ok(Socks5Datagram {
-            socket: socket,
-            stream: stream,
+            socket,
+            stream,
         })
     }
 
@@ -528,7 +524,7 @@ impl Socks5Datagram {
         unsafe {
             ptr::copy(
                 buf.as_ptr(),
-                buf.as_mut_ptr().offset(header.len() as isize),
+                buf.as_mut_ptr().add(header.len()),
                 overflow,
             );
         }
