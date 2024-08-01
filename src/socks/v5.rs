@@ -253,10 +253,7 @@ impl Socks5Stream {
 
         let proxy_addr = read_response(&mut socket)?;
 
-        Ok(Socks5Stream {
-            socket,
-            proxy_addr,
-        })
+        Ok(Socks5Stream { socket, proxy_addr })
     }
 
     fn password_authentication(
@@ -470,10 +467,7 @@ impl Socks5Datagram {
         let socket = UdpSocket::bind(addr)?;
         socket.connect(&stream.proxy_addr)?;
 
-        Ok(Socks5Datagram {
-            socket,
-            stream,
-        })
+        Ok(Socks5Datagram { socket, stream })
     }
 
     /// Like `UdpSocket::send_to`.
@@ -522,11 +516,7 @@ impl Socks5Datagram {
         let addr = read_addr(&mut header)?;
 
         unsafe {
-            ptr::copy(
-                buf.as_ptr(),
-                buf.as_mut_ptr().add(header.len()),
-                overflow,
-            );
+            ptr::copy(buf.as_ptr(), buf.as_mut_ptr().add(header.len()), overflow);
         }
         buf[..header.len()].copy_from_slice(header);
 

@@ -148,7 +148,6 @@ impl Client {
     /// If no prefix is specified, then `tcp://` is assumed.
     ///
     /// See [Client::from_config] for more configuration options
-    ///
     pub fn new(url: &str) -> Result<Self, Error> {
         Self::from_config(url, Config::default())
     }

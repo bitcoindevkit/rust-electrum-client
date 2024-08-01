@@ -117,10 +117,7 @@ impl Socks4Stream {
         socket.write_all(&packet)?;
         let proxy_addr = read_response(&mut socket)?;
 
-        Ok(Socks4Stream {
-            socket,
-            proxy_addr,
-        })
+        Ok(Socks4Stream { socket, proxy_addr })
     }
 
     /// Returns the proxy-side address of the connection between the proxy and
