@@ -6,12 +6,12 @@ use log::{info, warn};
 
 use bitcoin::{Script, Txid};
 
-use api::ElectrumApi;
-use batch::Batch;
-use config::Config;
-use raw_client::*;
+use crate::api::ElectrumApi;
+use crate::batch::Batch;
+use crate::config::Config;
+use crate::raw_client::*;
+use crate::types::*;
 use std::convert::TryFrom;
-use types::*;
 
 /// Generalized Electrum client that supports multiple backends. This wraps
 /// [`RawClient`](client/struct.RawClient.html) and provides a more user-friendly
@@ -148,7 +148,6 @@ impl Client {
     /// If no prefix is specified, then `tcp://` is assumed.
     ///
     /// See [Client::from_config] for more configuration options
-    ///
     pub fn new(url: &str) -> Result<Self, Error> {
         Self::from_config(url, Config::default())
     }
@@ -353,7 +352,7 @@ mod tests {
     fn more_failed_attempts_than_retries_means_exhausted() {
         let exhausted = retries_exhausted(10, 5);
 
-        assert_eq!(exhausted, true)
+        assert!(exhausted)
     }
 
     #[test]
@@ -362,21 +361,21 @@ mod tests {
 
         let exhausted = retries_exhausted(failed_attempts, u8::MAX);
 
-        assert_eq!(exhausted, true)
+        assert!(exhausted)
     }
 
     #[test]
     fn less_failed_attempts_means_not_exhausted() {
         let exhausted = retries_exhausted(2, 5);
 
-        assert_eq!(exhausted, false)
+        assert!(!exhausted)
     }
 
     #[test]
     fn attempts_equals_retries_means_not_exhausted_yet() {
         let exhausted = retries_exhausted(2, 2);
 
-        assert_eq!(exhausted, false)
+        assert!(!exhausted)
     }
 
     #[test]
@@ -408,7 +407,7 @@ mod tests {
             sender.send(()).unwrap();
 
             for _stream in listener.incoming() {
-                loop {}
+                std::thread::sleep(Duration::from_secs(60))
             }
         });
 

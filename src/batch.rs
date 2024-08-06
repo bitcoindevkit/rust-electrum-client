@@ -4,7 +4,7 @@
 
 use bitcoin::{Script, Txid};
 
-use types::{Call, Param, ToElectrumScriptHash};
+use crate::types::{Call, Param, ToElectrumScriptHash};
 
 /// Helper structure that caches all the requests before they are actually sent to the server.
 ///
@@ -16,6 +16,7 @@ use types::{Call, Param, ToElectrumScriptHash};
 /// [`Client`](../client/struct.Client.html), like
 /// [`batch_script_get_balance`](../client/struct.Client.html#method.batch_script_get_balance) to ask the
 /// server for the balance of multiple scripts with a single request.
+#[derive(Default)]
 pub struct Batch {
     calls: Vec<Call>,
 }
@@ -105,11 +106,5 @@ impl<'a> std::iter::Iterator for BatchIter<'a> {
         let val = self.batch.calls.get(self.index);
         self.index += 1;
         val
-    }
-}
-
-impl std::default::Default for Batch {
-    fn default() -> Self {
-        Batch { calls: Vec::new() }
     }
 }

@@ -87,7 +87,7 @@ impl From<[u8; 32]> for Hex32Bytes {
 }
 
 impl Hex32Bytes {
-    pub(crate) fn to_hex(&self) -> String {
+    pub(crate) fn to_hex(self) -> String {
         self.0.to_lower_hex_string()
     }
 }

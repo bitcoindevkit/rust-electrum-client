@@ -6,8 +6,8 @@ use std::convert::TryInto;
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::{block, Script, Transaction, Txid};
 
-use batch::Batch;
-use types::*;
+use crate::batch::Batch;
+use crate::types::*;
 
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {

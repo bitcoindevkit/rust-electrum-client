@@ -10,6 +10,7 @@ description = "Bitcoin Electrum client library. Supports plaintext, TLS and Onio
 keywords = ["bitcoin", "electrum"]
 readme = "README.md"
 rust-version = "1.63.0"
+edition = "2021"
 
 # loosely based on https://github.com/evgeniy-scherbina/rust-electrumx-client
 

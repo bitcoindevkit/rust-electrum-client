@@ -39,11 +39,11 @@ use rustls::{
 #[cfg(any(feature = "default", feature = "proxy"))]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
-use stream::ClonableStream;
+use crate::stream::ClonableStream;
 
-use api::ElectrumApi;
-use batch::Batch;
-use types::*;
+use crate::api::ElectrumApi;
+use crate::batch::Batch;
+use crate::types::*;
 
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
@@ -83,7 +83,7 @@ pub trait ToSocketAddrsDomain: ToSocketAddrs {
 
 impl ToSocketAddrsDomain for &str {
     fn domain(&self) -> Option<&str> {
-        self.splitn(2, ':').next()
+        self.split(':').next()
     }
 }
 
@@ -298,7 +298,7 @@ impl RawClient<ElectrumSslStream> {
     not(feature = "use-openssl")
 ))]
 mod danger {
-    use raw_client::ServerName;
+    use crate::raw_client::ServerName;
     use rustls::client::danger::ServerCertVerified;
     use rustls::pki_types::CertificateDer;
     use rustls::pki_types::UnixTime;
@@ -406,11 +406,11 @@ impl RawClient<ElectrumSslStream> {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
             let store = webpki_roots::TLS_SERVER_ROOTS
-                .into_iter()
+                .iter()
                 .map(|t| TrustAnchor {
                     subject: Der::from_slice(t.subject),
                     subject_public_key_info: Der::from_slice(t.spki),
-                    name_constraints: t.name_constraints.map(|nc| Der::from_slice(nc)),
+                    name_constraints: t.name_constraints.map(Der::from_slice),
                 })
                 .collect::<RootCertStore>();
 
@@ -605,7 +605,7 @@ impl<S: Read + Write> RawClient<S> {
                             // No id, that's probably a notification.
                             let mut resp = resp;
 
-                            if let Some(ref method) = resp["method"].take().as_str() {
+                            if let Some(method) = resp["method"].take().as_str() {
                                 self.handle_notification(method, resp["params"].take())?;
                             } else {
                                 warn!("Unexpected response: {:?}", resp);
@@ -722,7 +722,7 @@ impl<S: Read + Write> RawClient<S> {
     ) -> Result<serde_json::Value, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
-            &method_name,
+            method_name,
             params,
         );
         let result = self.call(req)?;
@@ -763,7 +763,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         for (method, params) in batch.iter() {
             let req = Request::new_id(
                 self.last_id.fetch_add(1, Ordering::SeqCst),
-                &method,
+                method,
                 params.to_vec(),
             );
             missing_responses.insert(req.id);
@@ -804,7 +804,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             };
         }
 
-        Ok(answers.into_iter().map(|(_, r)| r).collect())
+        Ok(answers.into_values().collect())
     }
 
     fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
@@ -1128,7 +1128,7 @@ mod test {
     use crate::utils;
 
     use super::RawClient;
-    use api::ElectrumApi;
+    use crate::api::ElectrumApi;
 
     fn get_test_server() -> String {
         std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("electrum.blockstream.info:50001".into())
@@ -1426,7 +1426,7 @@ mod test {
 
     #[test]
     fn test_raw_call() {
-        use types::Param;
+        use crate::types::Param;
 
         let client = RawClient::new(get_test_server(), None).unwrap();
 

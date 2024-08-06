@@ -3,12 +3,11 @@ on: [push, pull_request]
 name: CI
 
 jobs:
-  test-fmt:
+  test:
     name: Test
     runs-on: ubuntu-20.04
     env:
       TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
-      #TEST_ELECTRUM_SERVER: bitcoin.aranguren.org:50001
     strategy:
       matrix:
         rust:
@@ -16,7 +15,7 @@ jobs:
           - 1.63.0 # MSRV
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Cache
         uses: actions/cache@v2
         with:
@@ -25,14 +24,10 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ github.job }}-${{ hashFiles('**/Cargo.toml','**/Cargo.lock') }}
-      - name: Install rustup
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
-      - name: Set default toolchain
-        run: $HOME/.cargo/bin/rustup default ${{ matrix.rust }}
-      - name: Set profile
-        run: $HOME/.cargo/bin/rustup set profile minimal
-      - name: Fmt
-        run: cargo fmt -- --check --verbose
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
       - name: Test
         run: cargo test --verbose --all-features
       - name: Setup iptables for the timeout test
@@ -46,3 +41,32 @@ jobs:
       - run: cargo check --verbose --no-default-features --features=proxy,use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls-ring
+
+  fmt:
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Check fmt
+        run: cargo fmt --all -- --config format_code_in_doc_comments=true --check
+
+  clippy_check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.78.0
+          components: clippy
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2.2.1
+      - uses: actions-rs/clippy-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          args: --all-features --all-targets -- -D warnings
