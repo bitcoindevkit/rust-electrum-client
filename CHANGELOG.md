@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0]
+
+ - Add use-rustls-ring feature #135
+ - refactor: make validate_merkle_proof more efficient #134
+ - chore: set rust edition to 2021, fix clippy, add ci fmt and clippy checks #139
+
+## [0.20.0]
+
+- Upgrade rustls to 0.23 #132
+- chore(deps): upgrade rust-bitcoin to 0.32.0 #133
+- ci: add test with MSRV 1.63.0 #128
+
 ## [0.19.0]
 
  - Add Batch::raw and improve docs #94
@@ -23,4 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.18.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.17.0...0.18.0
 [0.19.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.18.0...v0.19.0
-[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.19.0...HEAD
+[0.20.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.19.0...v0.20.0
+[0.21.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.20.0...v0.21.0
+[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.21.0...HEAD
