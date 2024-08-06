@@ -318,6 +318,9 @@ pub enum Error {
     #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
     /// Could not create a rustls client connection
     CouldNotCreateConnection(rustls::Error),
+    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+    /// Could not create the `ClientConfig` with safe default protocol version
+    CouldNotBuildWithSafeDefaultVersion(rustls::Error),
 
     #[cfg(feature = "use-openssl")]
     /// Invalid OpenSSL method used
@@ -365,6 +368,8 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+            Error::CouldNotBuildWithSafeDefaultVersion(_) => f.write_str("Couldn't build the `ClientConfig` with safe default version"),
         }
     }
 }

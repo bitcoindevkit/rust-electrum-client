@@ -23,14 +23,11 @@ use bitcoin::{Script, Txid};
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
 
 #[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
+    any(feature = "use-rustls", feature = "use-rustls-ring"),
     not(feature = "use-openssl")
 ))]
 use rustls::{
+    crypto::CryptoProvider,
     pki_types::ServerName,
     pki_types::{Der, TrustAnchor},
     ClientConfig, ClientConnection, RootCertStore, StreamOwned,
@@ -368,7 +365,13 @@ impl RawClient<ElectrumSslStream> {
         socket_addrs: A,
         validate_domain: bool,
         timeout: Option<Duration>,
+        crypto_provider: Option<&CryptoProvider>,
     ) -> Result<Self, Error> {
+        #[cfg(feature = "use-rustls")]
+        use rustls::crypto::aws_lc_rs::default_provider;
+        #[cfg(feature = "use-rustls-ring")]
+        use rustls::crypto::ring::default_provider;
+
         debug!(
             "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
             socket_addrs.domain(),
@@ -378,16 +381,27 @@ impl RawClient<ElectrumSslStream> {
         if validate_domain {
             socket_addrs.domain().ok_or(Error::MissingDomain)?;
         }
+
+        let crypto_provider = match crypto_provider {
+            Some(provider) => provider.to_owned(),
+
+            #[cfg(feature = "use-rustls")]
+            None => default_provider(),
+
+            #[cfg(feature = "use-rustls-ring")]
+            None => default_provider(),
+        };
+
         match timeout {
             Some(timeout) => {
                 let stream = connect_with_total_timeout(socket_addrs.clone(), timeout)?;
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream, crypto_provider)
             }
             None => {
                 let stream = TcpStream::connect(socket_addrs.clone())?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream, crypto_provider)
             }
         }
     }
@@ -397,10 +411,13 @@ impl RawClient<ElectrumSslStream> {
         socket_addr: A,
         validate_domain: bool,
         tcp_stream: TcpStream,
+        crypto_provider: CryptoProvider,
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
-        let builder = ClientConfig::builder();
+        let builder = ClientConfig::builder_with_provider(crypto_provider.into())
+            .with_safe_default_protocol_versions()
+            .map_err(Error::CouldNotBuildWithSafeDefaultVersion)?;
 
         let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
@@ -441,6 +458,7 @@ impl RawClient<ElectrumSslStream> {
 #[cfg(any(feature = "default", feature = "proxy"))]
 /// Transport type used to establish a connection to a server through a socks proxy
 pub type ElectrumProxyStream = Socks5Stream;
+
 #[cfg(any(feature = "default", feature = "proxy"))]
 impl RawClient<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as a
@@ -467,11 +485,63 @@ impl RawClient<ElectrumProxyStream> {
         Ok(stream.into())
     }
 
-    #[cfg(any(
-        feature = "use-openssl",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
+    #[cfg(all(
+        any(
+            feature = "default",
+            feature = "use-rustls",
+            feature = "use-rustls-ring"
+        ),
+        not(feature = "use-openssl")
     ))]
+    /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
+    /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
+    /// allows to specify, for instance, `.onion` addresses.
+    pub fn new_proxy_ssl<T: ToTargetAddr>(
+        target_addr: T,
+        validate_domain: bool,
+        proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
+        crypto_provider: Option<&CryptoProvider>,
+    ) -> Result<RawClient<ElectrumSslStream>, Error> {
+        #[cfg(feature = "use-rustls")]
+        use rustls::crypto::aws_lc_rs::default_provider;
+        #[cfg(feature = "use-rustls-ring")]
+        use rustls::crypto::ring::default_provider;
+
+        let target = target_addr.to_target_addr()?;
+
+        let mut stream = match proxy.credentials.as_ref() {
+            Some(cred) => Socks5Stream::connect_with_password(
+                &proxy.addr,
+                target_addr,
+                &cred.username,
+                &cred.password,
+                timeout,
+            )?,
+            None => Socks5Stream::connect(&proxy.addr, target.clone(), timeout)?,
+        };
+        stream.get_mut().set_read_timeout(timeout)?;
+        stream.get_mut().set_write_timeout(timeout)?;
+
+        let crypto_provider = match crypto_provider {
+            Some(provider) => provider.to_owned(),
+
+            #[cfg(feature = "use-rustls")]
+            None => default_provider(),
+
+            #[cfg(feature = "use-rustls-ring")]
+            None => default_provider(),
+        };
+
+        RawClient::new_ssl_from_stream(
+            target,
+            validate_domain,
+            stream.into_inner(),
+            crypto_provider,
+        )
+    }
+
+    #[cfg(feature = "use-openssl")]
     /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
     /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
     /// allows to specify, for instance, `.onion` addresses.
