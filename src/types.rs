@@ -309,7 +309,8 @@ pub enum Error {
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads
     SharedIOError(Arc<std::io::Error>),
-
+    /// There was an error parsing a fee rate
+    FeeRate(String),
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
     CouldntLockReader,
@@ -365,6 +366,7 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            Error::FeeRate(e) => f.write_str(e),
         }
     }
 }
