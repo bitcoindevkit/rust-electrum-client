@@ -17,7 +17,7 @@ use std::convert::TryFrom;
 /// [`RawClient`](client/struct.RawClient.html) and provides a more user-friendly
 /// constructor that can choose the right backend based on the url prefix.
 ///
-/// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
+/// **This is available only with the `default` features, or if one ssl implementation are enabled**
 pub enum ClientType {
     #[allow(missing_docs)]
     TCP(RawClient<ElectrumPlaintextStream>),

@@ -35,12 +35,12 @@ jobs:
       - name: Timeout test
         run: cargo test -- --ignored test_local_timeout
       - run: cargo check --verbose --features=use-openssl
-      - run: cargo check --verbose --no-default-features --features=proxy
+      - run: cargo check --verbose --no-default-features
       - run: cargo check --verbose --no-default-features --features=minimal
       - run: cargo check --verbose --no-default-features --features=minimal,debug-calls
-      - run: cargo check --verbose --no-default-features --features=proxy,use-openssl
-      - run: cargo check --verbose --no-default-features --features=proxy,use-rustls
-      - run: cargo check --verbose --no-default-features --features=proxy,use-rustls-ring
+      - run: cargo check --verbose --no-default-features --features=use-openssl
+      - run: cargo check --verbose --no-default-features --features=use-rustls
+      - run: cargo check --verbose --no-default-features --features=use-rustls-ring
 
   fmt:
     name: Rust fmt
