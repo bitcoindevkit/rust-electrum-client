@@ -36,7 +36,7 @@ use rustls::{
     ClientConfig, ClientConnection, RootCertStore, StreamOwned,
 };
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "default")]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
 use crate::stream::ClonableStream;
@@ -93,7 +93,7 @@ impl ToSocketAddrsDomain for (&str, u16) {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "default")]
 impl ToSocketAddrsDomain for TargetAddr {
     fn domain(&self) -> Option<&str> {
         match self {
@@ -398,8 +398,6 @@ impl RawClient<ElectrumSslStream> {
         validate_domain: bool,
         tcp_stream: TcpStream,
     ) -> Result<Self, Error> {
-        use std::convert::TryFrom;
-
         let builder = ClientConfig::builder();
 
         let config = if validate_domain {
@@ -438,10 +436,10 @@ impl RawClient<ElectrumSslStream> {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "default")]
 /// Transport type used to establish a connection to a server through a socks proxy
 pub type ElectrumProxyStream = Socks5Stream;
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "default")]
 impl RawClient<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as a
     /// socks proxy server. The DNS resolution of `target_addr`, if required, is done
