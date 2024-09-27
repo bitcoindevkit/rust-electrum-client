@@ -299,23 +299,29 @@ impl RawClient<ElectrumSslStream> {
 ))]
 mod danger {
     use crate::raw_client::ServerName;
-    use rustls::client::danger::ServerCertVerified;
-    use rustls::pki_types::CertificateDer;
-    use rustls::pki_types::UnixTime;
-    use rustls::Error;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
+    use rustls::crypto::CryptoProvider;
+    use rustls::pki_types::{CertificateDer, UnixTime};
+    use rustls::DigitallySignedStruct;
 
     #[derive(Debug)]
-    pub struct NoCertificateVerification {}
+    pub struct NoCertificateVerification(CryptoProvider);
+
+    impl NoCertificateVerification {
+        pub fn new(provider: CryptoProvider) -> Self {
+            Self(provider)
+        }
+    }
 
     impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         fn verify_server_cert(
             &self,
-            _end_entity: &CertificateDer,
-            _intermediates: &[CertificateDer],
-            _server_name: &ServerName,
-            _ocsp_response: &[u8],
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp: &[u8],
             _now: UnixTime,
-        ) -> Result<ServerCertVerified, Error> {
+        ) -> Result<ServerCertVerified, rustls::Error> {
             Ok(ServerCertVerified::assertion())
         }
 
@@ -323,22 +329,22 @@ mod danger {
             &self,
             _message: &[u8],
             _cert: &CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
         }
 
         fn verify_tls13_signature(
             &self,
             _message: &[u8],
             _cert: &CertificateDer<'_>,
-            _dss: &rustls::DigitallySignedStruct,
-        ) -> Result<rustls::client::danger::HandshakeSignatureValid, Error> {
-            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
         }
 
         fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-            vec![]
+            self.0.signature_verification_algorithms.supported_schemes()
         }
     }
 }
@@ -420,7 +426,10 @@ impl RawClient<ElectrumSslStream> {
             builder
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
-                    danger::NoCertificateVerification {},
+                    #[cfg(feature = "use-rustls")]
+                    danger::NoCertificateVerification::new(rustls::crypto::aws_lc_rs::default_provider()),
+                    #[cfg(feature = "use-rustls-ring")]
+                    danger::NoCertificateVerification::new(rustls::crypto::ring::default_provider()),
                 ))
                 .with_no_client_auth()
         };
