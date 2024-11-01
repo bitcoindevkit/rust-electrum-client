@@ -1102,6 +1102,38 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
+        let params = vec![Param::Usize(height), Param::Usize(tx_pos)];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.id_from_pos",
+            params,
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
+    fn txid_from_pos_with_merkle(
+        &self,
+        height: usize,
+        tx_pos: usize,
+    ) -> Result<TxidFromPosRes, Error> {
+        let params = vec![
+            Param::Usize(height),
+            Param::Usize(tx_pos),
+            Param::Bool(true),
+        ];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.id_from_pos",
+            params,
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -1394,6 +1426,39 @@ mod test {
             &fail_block_header.merkle_root,
             &resp
         ));
+    }
+
+    #[test]
+    fn test_txid_from_pos() {
+        use bitcoin::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let txid =
+            Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
+                .unwrap();
+        let resp = client.txid_from_pos(630000, 68).unwrap();
+        assert_eq!(resp, txid);
+    }
+
+    #[test]
+    fn test_txid_from_pos_with_merkle() {
+        use bitcoin::Txid;
+
+        let client = RawClient::new(get_test_server(), None).unwrap();
+
+        let txid =
+            Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
+                .unwrap();
+        let resp = client.txid_from_pos_with_merkle(630000, 68).unwrap();
+        assert_eq!(resp.tx_hash, txid);
+        assert_eq!(
+            resp.merkle[0],
+            [
+                34, 65, 51, 64, 49, 139, 115, 189, 185, 246, 70, 225, 168, 193, 217, 195, 47, 66,
+                179, 240, 153, 24, 114, 215, 144, 196, 212, 41, 39, 155, 246, 25
+            ]
+        );
     }
 
     #[test]

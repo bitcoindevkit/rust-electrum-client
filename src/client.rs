@@ -328,6 +328,20 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
+        impl_inner_call!(self, txid_from_pos, height, tx_pos)
+    }
+
+    #[inline]
+    fn txid_from_pos_with_merkle(
+        &self,
+        height: usize,
+        tx_pos: usize,
+    ) -> Result<TxidFromPosRes, Error> {
+        impl_inner_call!(self, txid_from_pos_with_merkle, height, tx_pos)
+    }
+
+    #[inline]
     fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
         impl_inner_call!(self, server_features)
     }
