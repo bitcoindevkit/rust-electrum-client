@@ -200,6 +200,17 @@ pub trait ElectrumApi {
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
 
+    /// Returns a transaction hash, given a block `height` and a `tx_pos` in the block.
+    fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error>;
+
+    /// Returns a transaction hash and a merkle path, given a block `height` and a `tx_pos` in the
+    /// block.
+    fn txid_from_pos_with_merkle(
+        &self,
+        height: usize,
+        tx_pos: usize,
+    ) -> Result<TxidFromPosRes, Error>;
+
     /// Returns the capabilities of the server.
     fn server_features(&self) -> Result<ServerFeaturesRes, Error>;
 
