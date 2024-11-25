@@ -9,3 +9,14 @@
 [Rust Blog]: https://blog.rust-lang.org/2022/08/11/Rust-1.63.0.html
 
 Bitcoin Electrum client library. Supports plaintext, TLS and Onion servers.
+
+## Minimum Supported Rust Version (MSRV)
+
+This library should compile with any combination of features with Rust 1.63.0.
+
+To build with the MSRV you will need to pin dependencies as follows:
+
+```shell
+cargo update -p rustls --precise "0.23.17"
+```
+
