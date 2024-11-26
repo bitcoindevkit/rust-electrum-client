@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+use rustls::crypto::CryptoProvider;
+
 /// Configuration for an electrum client
 ///
 /// Refer to [`Client::from_config`] and [`ClientType::from_config`].
@@ -12,6 +15,9 @@ pub struct Config {
     socks5: Option<Socks5Config>,
     /// timeout in seconds, default None (depends on TcpStream default)
     timeout: Option<Duration>,
+    /// An optional [`CryptoProvider`] for users that don't want either default `aws-lc-rs` or `ring` providers
+    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+    crypto_provider: Option<CryptoProvider>,
     /// number of retry if any error, default 1
     retry: u8,
     /// when ssl, validate the domain, default true
@@ -57,6 +63,13 @@ impl ConfigBuilder {
     /// Sets the timeout
     pub fn timeout(mut self, timeout: Option<u8>) -> Self {
         self.config.timeout = timeout.map(|t| Duration::from_secs(t as u64));
+        self
+    }
+
+    /// Sets the custom [`CryptoProvider`].
+    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+    pub fn crypto_provider(mut self, crypto_provider: Option<CryptoProvider>) -> Self {
+        self.config.crypto_provider = crypto_provider;
         self
     }
 
@@ -135,6 +148,14 @@ impl Config {
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
     }
+
+    /// Get the configuration for `crypto_provider`
+    ///
+    /// Set this with [`ConfigBuilder::crypto_provider`]
+    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+    pub fn crypto_provider(&self) -> Option<&CryptoProvider> {
+        self.crypto_provider.as_ref()
+    }
 }
 
 impl Default for Config {
@@ -144,6 +165,8 @@ impl Default for Config {
             timeout: None,
             retry: 1,
             validate_domain: true,
+            #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+            crypto_provider: None,
         }
     }
 }
