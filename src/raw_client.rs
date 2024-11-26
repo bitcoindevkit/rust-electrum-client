@@ -17,7 +17,7 @@ use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{FeeRate, Script, Txid};
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -35,9 +35,11 @@ use rustls::{
     pki_types::{Der, TrustAnchor},
     ClientConfig, ClientConnection, RootCertStore, StreamOwned,
 };
+use serde_json::Value;
 
 #[cfg(any(feature = "default", feature = "proxy"))]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
+use crate::utils::convert_fee_rate;
 
 use crate::stream::ClonableStream;
 
@@ -64,6 +66,23 @@ macro_rules! impl_batch_call {
         let mut answer = Vec::new();
 
         for x in resp {
+            answer.push(serde_json::from_value(x)?);
+        }
+
+        Ok(answer)
+    }};
+
+    ( $self:expr, $data:expr, $aux_call:expr, $call:ident, $($apply_deref:tt)? ) => {{
+        let mut batch = Batch::default();
+        for i in $data {
+            batch.$call($($apply_deref)* i.borrow());
+        }
+
+        let resp = $self.batch_call(&batch)?;
+        let mut answer = Vec::new();
+
+        for x in resp {
+            $aux_call(x);
             answer.push(serde_json::from_value(x)?);
         }
 
@@ -866,7 +885,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(deserialized)
     }
 
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
+    fn estimate_fee(&self, number: usize) -> Result<FeeRate, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.estimatefee",
@@ -876,10 +895,11 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         result
             .as_f64()
-            .ok_or_else(|| Error::InvalidResponse(result.clone()))
+            .map(|val| convert_fee_rate(Value::from(val)))
+            .expect("Invalid response")
     }
 
-    fn relay_fee(&self) -> Result<f64, Error> {
+    fn relay_fee(&self) -> Result<FeeRate, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.relayfee",
@@ -889,7 +909,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         result
             .as_f64()
-            .ok_or_else(|| Error::InvalidResponse(result.clone()))
+            .map(|val| convert_fee_rate(Value::from(val)))
+            .expect("Invalid response")
     }
 
     fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
@@ -1070,12 +1091,12 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             .collect()
     }
 
-    fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<f64>, Error>
+    fn batch_estimate_fee<'s, I>(&self, numbers: I) -> Result<Vec<FeeRate>, Error>
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<usize>,
     {
-        impl_batch_call!(self, numbers, estimate_fee, apply_deref)
+        impl_batch_call!(self, numbers, convert_fee_rate, estimate_fee, apply_deref)
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
@@ -1190,20 +1211,21 @@ mod test {
         assert_eq!(resp.hash_function, Some("sha256".into()));
         assert_eq!(resp.pruning, None);
     }
+
     #[test]
     fn test_relay_fee() {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
-        let resp = client.relay_fee().unwrap();
-        assert_eq!(resp, 0.00001);
+        let resp = client.relay_fee().unwrap().to_sat_per_vb_ceil();
+        assert!(resp > 0);
     }
 
     #[test]
     fn test_estimate_fee() {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
-        let resp = client.estimate_fee(10).unwrap();
-        assert!(resp > 0.0);
+        let resp = client.estimate_fee(10).unwrap().to_sat_per_vb_ceil();
+        assert!(resp > 0);
     }
 
     #[test]
@@ -1329,8 +1351,8 @@ mod test {
 
         let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
         assert_eq!(resp.len(), 2);
-        assert!(resp[0] > 0.0);
-        assert!(resp[1] > 0.0);
+        assert!(resp[0].to_sat_per_vb_ceil() > 0);
+        assert!(resp[1].to_sat_per_vb_ceil() > 0);
     }
 
     #[test]
