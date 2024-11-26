@@ -45,3 +45,7 @@ proxy = ["byteorder", "winapi", "libc"]
 use-rustls = ["webpki-roots", "rustls/default"]
 use-rustls-ring = ["webpki-roots", "rustls/ring", "rustls/logging", "rustls/std", "rustls/tls12"]
 use-openssl = ["openssl"]
+test_servers = ["default"]
+
+[dev-dependencies]
+rstest = "^0.11"
