@@ -31,7 +31,7 @@ jobs:
       - name: Pin dependencies for MSRV
         if: matrix.rust == '1.63.0'
         run: |
-          cargo update -p rustls --precise "0.23.17"
+          cargo update -p rustls --precise "0.23.19"
       - name: Test
         run: cargo test --verbose --all-features
       - name: Setup iptables for the timeout test
