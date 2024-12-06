@@ -17,6 +17,6 @@ This library should compile with any combination of features with Rust 1.63.0.
 To build with the MSRV you will need to pin dependencies as follows:
 
 ```shell
-cargo update -p rustls --precise "0.23.17"
+cargo update -p rustls --precise "0.23.19"
 ```
 

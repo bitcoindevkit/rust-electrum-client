@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.1]
+
+ - Enforce min `rustls` version 0.23.19 to support MSRV with fix for RUSTSEC-2024-0399 #158
+
 ## [0.22.0]
 
  - Updates the NoCertificateVerification implementation for the rustls::client::danger::ServerCertVerifier to use the rustls::SignatureScheme from CryptoProvider in use #150
@@ -43,4 +47,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.20.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.19.0...v0.20.0
 [0.21.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.20.0...v0.21.0
 [0.22.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.21.0...v0.22.0
-[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.0...HEAD
+[0.22.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.0...v0.22.1
+[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.1...HEAD
