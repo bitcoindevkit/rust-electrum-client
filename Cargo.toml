@@ -9,7 +9,7 @@ documentation = "https://docs.rs/electrum-client/"
 description = "Bitcoin Electrum client library. Supports plaintext, TLS and Onion servers."
 keywords = ["bitcoin", "electrum"]
 readme = "README.md"
-rust-version = "1.63.0"
+rust-version = "1.75.0"
 edition = "2021"
 
 # loosely based on https://github.com/evgeniy-scherbina/rust-electrumx-client
