@@ -57,12 +57,13 @@ jobs:
         run: cargo fmt --all -- --config format_code_in_doc_comments=true --check
 
   clippy_check:
+    name: Rust clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.78.0
+          toolchain: 1.84.0
           components: clippy
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.2.1
