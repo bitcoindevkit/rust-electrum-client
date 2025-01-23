@@ -12,7 +12,7 @@ jobs:
       matrix:
         rust:
           - stable # STABLE
-          - 1.63.0 # MSRV
+          - 1.75.0 # MSRV
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,10 +28,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
-      - name: Pin dependencies for MSRV
-        if: matrix.rust == '1.63.0'
-        run: |
-          cargo update -p rustls --precise "0.23.19"
       - name: Test
         run: cargo test --verbose --all-features
       - name: Setup iptables for the timeout test
@@ -61,12 +57,13 @@ jobs:
         run: cargo fmt --all -- --config format_code_in_doc_comments=true --check
 
   clippy_check:
+    name: Rust clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.78.0
+          toolchain: 1.84.0
           components: clippy
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2.2.1

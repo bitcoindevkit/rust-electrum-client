@@ -148,7 +148,7 @@ impl Read for Socks4Stream {
     }
 }
 
-impl<'a> Read for &'a Socks4Stream {
+impl Read for &Socks4Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         (&self.socket).read(buf)
     }
@@ -164,7 +164,7 @@ impl Write for Socks4Stream {
     }
 }
 
-impl<'a> Write for &'a Socks4Stream {
+impl Write for &Socks4Stream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         (&self.socket).write(buf)
     }

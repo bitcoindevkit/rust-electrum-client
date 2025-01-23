@@ -135,7 +135,7 @@ enum Authentication<'a> {
     None,
 }
 
-impl<'a> Authentication<'a> {
+impl Authentication<'_> {
     fn id(&self) -> u8 {
         match *self {
             Authentication::Password { .. } => 2,
@@ -329,7 +329,7 @@ impl Read for Socks5Stream {
     }
 }
 
-impl<'a> Read for &'a Socks5Stream {
+impl Read for &Socks5Stream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         (&self.socket).read(buf)
     }
@@ -345,7 +345,7 @@ impl Write for Socks5Stream {
     }
 }
 
-impl<'a> Write for &'a Socks5Stream {
+impl Write for &Socks5Stream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         (&self.socket).write(buf)
     }

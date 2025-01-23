@@ -99,7 +99,7 @@ impl ToTargetAddr for (Ipv6Addr, u16) {
     }
 }
 
-impl<'a> ToTargetAddr for (&'a str, u16) {
+impl ToTargetAddr for (&str, u16) {
     fn to_target_addr(&self) -> io::Result<TargetAddr> {
         // try to parse as an IP first
         if let Ok(addr) = self.0.parse::<Ipv4Addr>() {
@@ -114,7 +114,7 @@ impl<'a> ToTargetAddr for (&'a str, u16) {
     }
 }
 
-impl<'a> ToTargetAddr for &'a str {
+impl ToTargetAddr for &str {
     fn to_target_addr(&self) -> io::Result<TargetAddr> {
         // try to parse as an IP first
         if let Ok(addr) = self.parse::<SocketAddrV4>() {
