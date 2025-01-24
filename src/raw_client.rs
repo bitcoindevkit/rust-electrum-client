@@ -798,7 +798,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         self.increment_calls();
 
         for (req_id, receiver) in missing_responses.iter() {
-            match self.recv(&receiver, *req_id) {
+            match self.recv(receiver, *req_id) {
                 Ok(mut resp) => answers.insert(req_id, resp["result"].take()),
                 Err(e) => {
                     // In case of error our sender could still be left in the map, depending on where
