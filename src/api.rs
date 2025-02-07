@@ -2,12 +2,174 @@
 
 use std::borrow::Borrow;
 use std::convert::TryInto;
+use std::ops::Deref;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
 use bitcoin::{block, Script, Transaction, Txid};
 
 use crate::batch::Batch;
 use crate::types::*;
+
+impl<E: Deref> ElectrumApi for E
+where
+    E::Target: ElectrumApi,
+{
+    fn raw_call(
+        &self,
+        method_name: &str,
+        params: impl IntoIterator<Item = Param>,
+    ) -> Result<serde_json::Value, Error> {
+        (**self).raw_call(method_name, params)
+    }
+
+    fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
+        (**self).batch_call(batch)
+    }
+
+    fn block_headers_subscribe_raw(&self) -> Result<RawHeaderNotification, Error> {
+        (**self).block_headers_subscribe_raw()
+    }
+
+    fn block_headers_pop_raw(&self) -> Result<Option<RawHeaderNotification>, Error> {
+        (**self).block_headers_pop_raw()
+    }
+
+    fn block_header_raw(&self, height: usize) -> Result<Vec<u8>, Error> {
+        (**self).block_header_raw(height)
+    }
+
+    fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error> {
+        (**self).block_headers(start_height, count)
+    }
+
+    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
+        (**self).estimate_fee(number)
+    }
+
+    fn relay_fee(&self) -> Result<f64, Error> {
+        (**self).relay_fee()
+    }
+
+    fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
+        (**self).script_subscribe(script)
+    }
+
+    fn batch_script_subscribe<'s, I>(&self, scripts: I) -> Result<Vec<Option<ScriptStatus>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_subscribe(scripts)
+    }
+
+    fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
+        (**self).script_unsubscribe(script)
+    }
+
+    fn script_pop(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
+        (**self).script_pop(script)
+    }
+
+    fn script_get_balance(&self, script: &Script) -> Result<GetBalanceRes, Error> {
+        (**self).script_get_balance(script)
+    }
+
+    fn batch_script_get_balance<'s, I>(&self, scripts: I) -> Result<Vec<GetBalanceRes>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_get_balance(scripts)
+    }
+
+    fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        (**self).script_get_history(script)
+    }
+
+    fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_get_history(scripts)
+    }
+
+    fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
+        (**self).script_list_unspent(script)
+    }
+
+    fn batch_script_list_unspent<'s, I>(
+        &self,
+        scripts: I,
+    ) -> Result<Vec<Vec<ListUnspentRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_list_unspent(scripts)
+    }
+
+    fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
+        (**self).transaction_get_raw(txid)
+    }
+
+    fn batch_transaction_get_raw<'t, I>(&self, txids: I) -> Result<Vec<Vec<u8>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'t Txid>,
+    {
+        (**self).batch_transaction_get_raw(txids)
+    }
+
+    fn batch_block_header_raw<I>(&self, heights: I) -> Result<Vec<Vec<u8>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<u32>,
+    {
+        (**self).batch_block_header_raw(heights)
+    }
+
+    fn batch_estimate_fee<I>(&self, numbers: I) -> Result<Vec<f64>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<usize>,
+    {
+        (**self).batch_estimate_fee(numbers)
+    }
+
+    fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
+        (**self).transaction_broadcast_raw(raw_tx)
+    }
+
+    fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
+        (**self).transaction_get_merkle(txid, height)
+    }
+
+    fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
+        (**self).txid_from_pos(height, tx_pos)
+    }
+
+    fn txid_from_pos_with_merkle(
+        &self,
+        height: usize,
+        tx_pos: usize,
+    ) -> Result<TxidFromPosRes, Error> {
+        (**self).txid_from_pos_with_merkle(height, tx_pos)
+    }
+
+    fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
+        (**self).server_features()
+    }
+
+    fn ping(&self) -> Result<(), Error> {
+        (**self).ping()
+    }
+
+    #[cfg(feature = "debug-calls")]
+    fn calls_made(&self) -> Result<usize, Error> {
+        (**self).calls_made()
+    }
+}
 
 /// API calls exposed by an Electrum client
 pub trait ElectrumApi {
@@ -221,4 +383,215 @@ pub trait ElectrumApi {
     #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
     fn calls_made(&self) -> Result<usize, Error>;
+}
+
+#[cfg(test)]
+mod test {
+    use std::{borrow::Cow, sync::Arc};
+
+    use super::ElectrumApi;
+
+    #[derive(Debug, Clone)]
+    struct FakeApi;
+
+    impl ElectrumApi for FakeApi {
+        fn raw_call(
+            &self,
+            _: &str,
+            _: impl IntoIterator<Item = super::Param>,
+        ) -> Result<serde_json::Value, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_call(&self, _: &crate::Batch) -> Result<Vec<serde_json::Value>, super::Error> {
+            unreachable!()
+        }
+
+        fn block_headers_subscribe_raw(
+            &self,
+        ) -> Result<super::RawHeaderNotification, super::Error> {
+            unreachable!()
+        }
+
+        fn block_headers_pop_raw(
+            &self,
+        ) -> Result<Option<super::RawHeaderNotification>, super::Error> {
+            unreachable!()
+        }
+
+        fn block_header_raw(&self, _: usize) -> Result<Vec<u8>, super::Error> {
+            unreachable!()
+        }
+
+        fn block_headers(&self, _: usize, _: usize) -> Result<super::GetHeadersRes, super::Error> {
+            unreachable!()
+        }
+
+        fn estimate_fee(&self, _: usize) -> Result<f64, super::Error> {
+            unreachable!()
+        }
+
+        fn relay_fee(&self) -> Result<f64, super::Error> {
+            unreachable!()
+        }
+
+        fn script_subscribe(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Option<super::ScriptStatus>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_subscribe<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<Option<super::ScriptStatus>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
+        fn script_unsubscribe(&self, _: &bitcoin::Script) -> Result<bool, super::Error> {
+            unreachable!()
+        }
+
+        fn script_pop(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Option<super::ScriptStatus>, super::Error> {
+            unreachable!()
+        }
+
+        fn script_get_balance(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<super::GetBalanceRes, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_get_balance<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<super::GetBalanceRes>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
+        fn script_get_history(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Vec<super::GetHistoryRes>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_get_history<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<Vec<super::GetHistoryRes>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
+        fn script_list_unspent(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Vec<super::ListUnspentRes>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_list_unspent<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<Vec<super::ListUnspentRes>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
+        fn transaction_get_raw(&self, _: &bitcoin::Txid) -> Result<Vec<u8>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_transaction_get_raw<'t, I>(&self, _: I) -> Result<Vec<Vec<u8>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'t bitcoin::Txid>,
+        {
+            unreachable!()
+        }
+
+        fn batch_block_header_raw<I>(&self, _: I) -> Result<Vec<Vec<u8>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<u32>,
+        {
+            unreachable!()
+        }
+
+        fn batch_estimate_fee<I>(&self, _: I) -> Result<Vec<f64>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<usize>,
+        {
+            unreachable!()
+        }
+
+        fn transaction_broadcast_raw(&self, _: &[u8]) -> Result<bitcoin::Txid, super::Error> {
+            unreachable!()
+        }
+
+        fn transaction_get_merkle(
+            &self,
+            _: &bitcoin::Txid,
+            _: usize,
+        ) -> Result<super::GetMerkleRes, super::Error> {
+            unreachable!()
+        }
+
+        fn txid_from_pos(&self, _: usize, _: usize) -> Result<bitcoin::Txid, super::Error> {
+            unreachable!()
+        }
+
+        fn txid_from_pos_with_merkle(
+            &self,
+            _: usize,
+            _: usize,
+        ) -> Result<super::TxidFromPosRes, super::Error> {
+            unreachable!()
+        }
+
+        fn server_features(&self) -> Result<super::ServerFeaturesRes, super::Error> {
+            unreachable!()
+        }
+
+        fn ping(&self) -> Result<(), super::Error> {
+            unreachable!()
+        }
+
+        #[cfg(feature = "debug-calls")]
+        fn calls_made(&self) -> Result<usize, super::Error> {
+            unreachable!()
+        }
+    }
+
+    fn is_impl<A: ElectrumApi>() {}
+
+    #[test]
+    fn deref() {
+        is_impl::<FakeApi>();
+        is_impl::<&FakeApi>();
+        is_impl::<Arc<FakeApi>>();
+        is_impl::<Box<FakeApi>>();
+        is_impl::<Cow<FakeApi>>();
+    }
 }
