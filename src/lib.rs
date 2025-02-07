@@ -7,7 +7,7 @@
 //! plaintext connections over a socks proxy, useful for Onion servers. Using different features,
 //! the SSL implementation can be removed or replaced with [`openssl`](https://docs.rs/openssl).
 //!
-//! A `minimal` configuration is also provided, which only includes the plaintext TCP client.
+//! The library can also be used no features set (e.g --no-default-features), which only includes the plaintext TCP client.
 //!
 //! # Example
 //!
