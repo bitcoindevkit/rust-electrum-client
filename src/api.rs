@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::convert::TryInto;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{block, Script, Transaction, Txid};
+use bitcoin::{block, Amount, Script, Transaction, Txid};
 
 use crate::batch::Batch;
 use crate::types::*;
@@ -97,8 +97,8 @@ pub trait ElectrumApi {
     /// Estimates the fee required in **Bitcoin per kilobyte** to confirm a transaction in `number` blocks.
     fn estimate_fee(&self, number: usize) -> Result<f64, Error>;
 
-    /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
-    fn relay_fee(&self) -> Result<f64, Error>;
+    /// Returns the minimum accepted fee by the server's node.
+    fn relay_fee(&self) -> Result<Amount, Error>;
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
     ///

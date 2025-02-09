@@ -4,7 +4,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{Script, Txid};
+use bitcoin::{Amount, Script, Txid};
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
@@ -212,7 +212,7 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn relay_fee(&self) -> Result<f64, Error> {
+    fn relay_fee(&self) -> Result<Amount, Error> {
         impl_inner_call!(self, relay_fee)
     }
 
