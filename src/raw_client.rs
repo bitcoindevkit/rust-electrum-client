@@ -3,7 +3,7 @@
 //! This module contains the definition of the raw client that wraps the transport method
 
 use std::borrow::Borrow;
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::drop;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -762,12 +762,10 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     fn batch_call(&self, batch: &Batch) -> Result<Vec<serde_json::Value>, Error> {
         let mut raw = Vec::new();
 
-        let mut missing_responses = BTreeSet::new();
+        let mut missing_responses = Vec::new();
         let mut answers = BTreeMap::new();
 
-        // Add our listener to the map before we send the request, Here we will clone the sender
-        // for every request id, so that we only have to monitor one receiver.
-        let (sender, receiver) = channel();
+        // Add our listener to the map before we send the request
 
         for (method, params) in batch.iter() {
             let req = Request::new_id(
@@ -775,9 +773,12 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
                 method,
                 params.to_vec(),
             );
-            missing_responses.insert(req.id);
+            // Add distinct channel to each request so when we remove our request id (and sender) from the waiting_map
+            // we can be sure that the response gets sent to the correct channel in self.recv
+            let (sender, receiver) = channel();
+            missing_responses.push((req.id, receiver));
 
-            self.waiting_map.lock()?.insert(req.id, sender.clone());
+            self.waiting_map.lock()?.insert(req.id, sender);
 
             raw.append(&mut serde_json::to_vec(&req)?);
             raw.extend_from_slice(b"\n");
@@ -796,8 +797,8 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         self.increment_calls();
 
-        for req_id in missing_responses.iter() {
-            match self.recv(&receiver, *req_id) {
+        for (req_id, receiver) in missing_responses.iter() {
+            match self.recv(receiver, *req_id) {
                 Ok(mut resp) => answers.insert(req_id, resp["result"].take()),
                 Err(e) => {
                     // In case of error our sender could still be left in the map, depending on where
@@ -805,7 +806,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
                     warn!("got error for req_id {}: {:?}", req_id, e);
                     warn!("removing all waiting req of this batch");
                     let mut guard = self.waiting_map.lock()?;
-                    for req_id in missing_responses.iter() {
+                    for (req_id, _) in missing_responses.iter() {
                         guard.remove(req_id);
                     }
                     return Err(e);
