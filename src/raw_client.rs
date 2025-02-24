@@ -17,7 +17,7 @@ use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{Amount, Script, Txid};
 
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -879,7 +879,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             .ok_or_else(|| Error::InvalidResponse(result.clone()))
     }
 
-    fn relay_fee(&self) -> Result<f64, Error> {
+    fn relay_fee(&self) -> Result<Amount, Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.relayfee",
@@ -887,9 +887,10 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         );
         let result = self.call(req)?;
 
-        result
+        let amount_float = result
             .as_f64()
-            .ok_or_else(|| Error::InvalidResponse(result.clone()))
+            .ok_or_else(|| Error::InvalidResponse(result.clone()))?;
+        Amount::from_btc(amount_float).map_err(|_| Error::InvalidResponse(result.clone()))
     }
 
     fn script_subscribe(&self, script: &Script) -> Result<Option<ScriptStatus>, Error> {
@@ -1195,7 +1196,7 @@ mod test {
         let client = RawClient::new(get_test_server(), None).unwrap();
 
         let resp = client.relay_fee().unwrap();
-        assert_eq!(resp, 0.00001);
+        assert_eq!(resp, bitcoin::Amount::from_btc(0.00001).unwrap());
     }
 
     #[test]
