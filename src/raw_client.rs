@@ -1190,6 +1190,26 @@ mod test {
         assert_eq!(resp.hash_function, Some("sha256".into()));
         assert_eq!(resp.pruning, None);
     }
+
+    #[test]
+    #[ignore = "depends on a live server"]
+    fn test_batch_response_ordering() {
+        // The electrum.blockstream.info:50001 node always sends back ordered responses which will make this always pass.
+        // However, many servers do not, so we use one of those servers for this test.
+        let client = RawClient::new("exs.dyshek.org:50001", None).unwrap();
+        let heights: Vec<u32> = vec![1, 4, 8, 12, 222, 6666, 12];
+        let result_times = [
+            1231469665, 1231470988, 1231472743, 1231474888, 1231770653, 1236456633, 1231474888,
+        ];
+        // Check ordering 10 times. This usually fails within 5 if ordering is incorrect.
+        for _ in 0..10 {
+            let results = client.batch_block_header(&heights).unwrap();
+            for (index, result) in results.iter().enumerate() {
+                assert_eq!(result_times[index], result.time);
+            }
+        }
+    }
+
     #[test]
     fn test_relay_fee() {
         let client = RawClient::new(get_test_server(), None).unwrap();
