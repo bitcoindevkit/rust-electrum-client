@@ -406,6 +406,29 @@ impl RawClient<ElectrumSslStream> {
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            // We install a crypto provider depending on the set feature.
+            #[cfg(feature = "use-rustls")]
+            rustls::crypto::CryptoProvider::install_default(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            )
+            .map_err(|_| {
+                Error::CouldNotCreateConnection(rustls::Error::General(
+                    "Failed to install CryptoProvider".to_string(),
+                ))
+            })?;
+
+            #[cfg(feature = "use-rustls-ring")]
+            rustls::crypto::CryptoProvider::install_default(
+                rustls::crypto::ring::default_provider(),
+            )
+            .map_err(|_| {
+                Error::CouldNotCreateConnection(rustls::Error::General(
+                    "Failed to install CryptoProvider".to_string(),
+                ))
+            })?;
+        }
+
         let builder = ClientConfig::builder();
 
         let config = if validate_domain {
