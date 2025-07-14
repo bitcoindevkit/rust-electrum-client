@@ -406,7 +406,15 @@ impl RawClient<ElectrumSslStream> {
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
-        let builder = ClientConfig::builder();
+        #[cfg(feature = "use-rustls")]
+        use rustls::crypto::aws_lc_rs as crypto_provider;
+        #[cfg(feature = "use-rustls-ring")]
+        use rustls::crypto::ring as crypto_provider;
+
+        let builder =
+            ClientConfig::builder_with_provider(Arc::new(crypto_provider::default_provider()))
+                .with_safe_default_protocol_versions()
+                .map_err(Error::CouldNotCreateConnection)?;
 
         let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
@@ -426,10 +434,7 @@ impl RawClient<ElectrumSslStream> {
             builder
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
-                    #[cfg(feature = "use-rustls")]
-                    danger::NoCertificateVerification::new(rustls::crypto::aws_lc_rs::default_provider()),
-                    #[cfg(feature = "use-rustls-ring")]
-                    danger::NoCertificateVerification::new(rustls::crypto::ring::default_provider()),
+                    danger::NoCertificateVerification::new(crypto_provider::default_provider()),
                 ))
                 .with_no_client_auth()
         };
