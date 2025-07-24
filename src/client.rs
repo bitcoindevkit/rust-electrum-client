@@ -328,6 +328,22 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn batch_transaction_get_merkle<I>(
+        &self,
+        txids_and_heights: I,
+    ) -> Result<Vec<GetMerkleRes>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(Txid, usize)>,
+    {
+        impl_inner_call!(
+            self,
+            batch_transaction_get_merkle,
+            txids_and_heights.clone()
+        )
+    }
+
+    #[inline]
     fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
         impl_inner_call!(self, txid_from_pos, height, tx_pos)
     }

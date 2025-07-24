@@ -145,6 +145,17 @@ where
         (**self).transaction_get_merkle(txid, height)
     }
 
+    fn batch_transaction_get_merkle<I>(
+        &self,
+        txids_and_heights: I,
+    ) -> Result<Vec<GetMerkleRes>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(Txid, usize)>,
+    {
+        (**self).batch_transaction_get_merkle(txids_and_heights)
+    }
+
     fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
         (**self).txid_from_pos(height, tx_pos)
     }
@@ -362,6 +373,17 @@ pub trait ElectrumApi {
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
 
+    /// Batch version of [`transaction_get_merkle`](#method.transaction_get_merkle).
+    ///
+    /// Take a list of `(txid, height)`, for transactions with `txid` confirmed in the block at `height`.
+    fn batch_transaction_get_merkle<I>(
+        &self,
+        txids_and_heights: I,
+    ) -> Result<Vec<GetMerkleRes>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(Txid, usize)>;
+
     /// Returns a transaction hash, given a block `height` and a `tx_pos` in the block.
     fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error>;
 
@@ -555,6 +577,17 @@ mod test {
             _: &bitcoin::Txid,
             _: usize,
         ) -> Result<super::GetMerkleRes, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_transaction_get_merkle<I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<crate::GetMerkleRes>, crate::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<(bitcoin::Txid, usize)>,
+        {
             unreachable!()
         }
 
