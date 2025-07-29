@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0]
+ - Use default `CryptoProvider` if available, otherwise install `rustls`'s `CryptoProvider` based on features #171
+ - Add a new batch method for `blockchain.transaction.get_merkle` #170
 
 ## [0.23.1]
  - Fix batch request to Electrum servers out of order responses #160
@@ -49,10 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  - Revert "errors if expecting headers notification but not subscribed" #115
 
 [0.18.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.17.0...0.18.0
-[0.19.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.18.0...v0.19.0
-[0.20.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.19.0...v0.20.0
-[0.21.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.20.0...v0.21.0
-[0.22.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.21.0...v0.22.0
-[0.23.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.0...v0.23.0
-[0.23.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.0...v0.23.1
-[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.1...HEAD
+[0.19.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.18.0...0.19.0
+[0.20.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.19.0...0.20.0
+[0.21.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.20.0...0.21.0
+[0.22.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.21.0...0.22.0
+[0.23.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.0...0.23.0
+[0.23.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.0...0.23.1
+[0.24.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.1...0.24.0
+[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.0...HEAD
