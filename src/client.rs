@@ -442,7 +442,7 @@ mod tests {
         });
 
         receiver
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(some(Duration::from_secs(5)))
             .expect("Can't start local listener");
 
         let now = Instant::now();
