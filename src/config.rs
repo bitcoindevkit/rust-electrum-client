@@ -55,8 +55,8 @@ impl ConfigBuilder {
     }
 
     /// Sets the timeout
-    pub fn timeout(mut self, timeout: Option<u8>) -> Self {
-        self.config.timeout = timeout.map(|t| Duration::from_secs(t as u64));
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.config.timeout = timeout;
         self
     }
 
