@@ -88,7 +88,7 @@ impl Batch {
     }
 
     /// Returns an iterator on the batch
-    pub fn iter(&self) -> BatchIter {
+    pub fn iter(&self) -> BatchIter<'_> {
         BatchIter {
             batch: self,
             index: 0,
