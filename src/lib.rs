@@ -43,24 +43,24 @@ extern crate serde_json;
 ))]
 extern crate webpki_roots;
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 extern crate byteorder;
 
-#[cfg(all(unix, any(feature = "default", feature = "proxy")))]
+#[cfg(all(unix, feature = "proxy"))]
 extern crate libc;
-#[cfg(all(windows, any(feature = "default", feature = "proxy")))]
+#[cfg(all(windows, feature = "proxy"))]
 extern crate winapi;
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 pub mod socks;
 
 mod api;
 mod batch;
 
 #[cfg(any(
-    all(feature = "proxy", feature = "use-openssl"),
-    all(feature = "proxy", feature = "use-rustls"),
-    all(feature = "proxy", feature = "use-rustls-ring")
+    feature = "use-openssl",
+    feature = "use-rustls",
+    feature = "use-rustls-ring",
 ))]
 pub mod client;
 
@@ -74,9 +74,9 @@ pub mod utils;
 pub use api::ElectrumApi;
 pub use batch::Batch;
 #[cfg(any(
-    all(feature = "proxy", feature = "use-openssl"),
-    all(feature = "proxy", feature = "use-rustls"),
-    all(feature = "proxy", feature = "use-rustls-ring")
+    feature = "use-openssl",
+    feature = "use-rustls",
+    feature = "use-rustls-ring",
 ))]
 pub use client::*;
 pub use config::{Config, ConfigBuilder, Socks5Config};
