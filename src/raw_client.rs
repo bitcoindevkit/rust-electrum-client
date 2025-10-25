@@ -504,10 +504,10 @@ impl RawClient<ElectrumSslStream> {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 /// Transport type used to establish a connection to a server through a socks proxy
 pub type ElectrumProxyStream = Socks5Stream;
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 impl RawClient<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as a
     /// socks proxy server. The DNS resolution of `target_addr`, if required, is done
@@ -535,10 +535,13 @@ impl RawClient<ElectrumProxyStream> {
         Ok(client)
     }
 
-    #[cfg(any(
-        feature = "use-openssl",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
+    #[cfg(all(
+        any(
+            feature = "use-openssl",
+            feature = "use-rustls",
+            feature = "use-rustls-ring",
+        ),
+        feature = "proxy",
     ))]
     /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
     /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This

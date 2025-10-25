@@ -17,13 +17,14 @@ use std::convert::TryFrom;
 /// [`RawClient`](client/struct.RawClient.html) and provides a more user-friendly
 /// constructor that can choose the right backend based on the url prefix.
 ///
-/// **This is available only with the `default` features, or if `proxy` and one ssl implementation are enabled**
+/// **Note the `Socks5` client type requires the `proxy` feature to be enabled.**
 pub enum ClientType {
     #[allow(missing_docs)]
     TCP(RawClient<ElectrumPlaintextStream>),
     #[allow(missing_docs)]
     SSL(RawClient<ElectrumSslStream>),
     #[allow(missing_docs)]
+    #[cfg(feature = "proxy")]
     Socks5(RawClient<ElectrumProxyStream>),
 }
 
@@ -44,6 +45,7 @@ macro_rules! impl_inner_call {
             let res = match &*read_client {
                 ClientType::TCP(inner) => inner.$name( $($args, )* ),
                 ClientType::SSL(inner) => inner.$name( $($args, )* ),
+                #[cfg(feature = "proxy")]
                 ClientType::Socks5(inner) => inner.$name( $($args, )* ),
             };
             drop(read_client);
@@ -110,6 +112,7 @@ impl ClientType {
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
+            #[cfg(feature = "proxy")]
             let client = match config.socks5() {
                 Some(socks5) => RawClient::new_proxy_ssl(
                     url.as_str(),
@@ -121,19 +124,28 @@ impl ClientType {
                     RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
                 }
             };
+            #[cfg(not(feature = "proxy"))]
+            let client =
+                RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
 
             Ok(ClientType::SSL(client))
         } else {
             let url = url.replacen("tcp://", "", 1);
 
-            Ok(match config.socks5().as_ref() {
-                None => ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?),
+            #[cfg(feature = "proxy")]
+            let client = match config.socks5() {
                 Some(socks5) => ClientType::Socks5(RawClient::new_proxy(
                     url.as_str(),
                     socks5,
                     config.timeout(),
                 )?),
-            })
+                None => ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?),
+            };
+
+            #[cfg(not(feature = "proxy"))]
+            let client = ClientType::TCP(RawClient::new(url.as_str(), config.timeout())?);
+
+            Ok(client)
         }
     }
 }
