@@ -425,14 +425,14 @@ pub enum Error {
     CouldntLockReader,
     /// Broken IPC communication channel: the other thread probably has exited
     Mpsc,
-    #[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+    #[cfg(any(feature = "rustls", feature = "rustls-ring"))]
     /// Could not create a rustls client connection
     CouldNotCreateConnection(rustls::Error),
 
-    #[cfg(feature = "use-openssl")]
+    #[cfg(feature = "openssl")]
     /// Invalid OpenSSL method used
     InvalidSslMethod(openssl::error::ErrorStack),
-    #[cfg(feature = "use-openssl")]
+    #[cfg(feature = "openssl")]
     /// SSL Handshake failed with the server
     SslHandshakeError(openssl::ssl::HandshakeError<std::net::TcpStream>),
 }
@@ -445,13 +445,13 @@ impl Display for Error {
             Error::Hex(e) => Display::fmt(e, f),
             Error::Bitcoin(e) => Display::fmt(e, f),
             Error::SharedIOError(e) => Display::fmt(e, f),
-            #[cfg(feature = "use-openssl")]
+            #[cfg(feature = "openssl")]
             Error::SslHandshakeError(e) => Display::fmt(e, f),
-            #[cfg(feature = "use-openssl")]
+            #[cfg(feature = "openssl")]
             Error::InvalidSslMethod(e) => Display::fmt(e, f),
             #[cfg(any(
-                feature = "use-rustls",
-                feature = "use-rustls-ring",
+                feature = "rustls",
+                feature = "rustls-ring",
             ))]
             Error::CouldNotCreateConnection(e) => Display::fmt(e, f),
 

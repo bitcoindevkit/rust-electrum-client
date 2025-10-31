@@ -22,14 +22,14 @@
 pub extern crate bitcoin;
 extern crate core;
 extern crate log;
-#[cfg(feature = "use-openssl")]
+#[cfg(feature = "openssl")]
 extern crate openssl;
-#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
 extern crate rustls;
 extern crate serde;
 extern crate serde_json;
 
-#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
 extern crate webpki_roots;
 
 #[cfg(feature = "proxy")]
@@ -46,11 +46,7 @@ pub mod socks;
 mod api;
 mod batch;
 
-#[cfg(any(
-    feature = "use-openssl",
-    feature = "use-rustls",
-    feature = "use-rustls-ring",
-))]
+#[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
 pub mod client;
 
 mod config;
@@ -62,11 +58,7 @@ pub mod utils;
 
 pub use api::ElectrumApi;
 pub use batch::Batch;
-#[cfg(any(
-    feature = "use-openssl",
-    feature = "use-rustls",
-    feature = "use-rustls-ring",
-))]
+#[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
 pub use client::*;
 pub use config::{Config, ConfigBuilder, Socks5Config};
 pub use types::*;
