@@ -22,21 +22,15 @@ use bitcoin::{Script, Txid};
 #[cfg(feature = "use-openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
 
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+#[allow(unused_imports)]
 use rustls::{
     pki_types::ServerName,
     pki_types::{Der, TrustAnchor},
     ClientConfig, ClientConnection, RootCertStore, StreamOwned,
 };
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
 use crate::stream::ClonableStream;
@@ -113,7 +107,7 @@ impl ToSocketAddrsDomain for (&str, u16) {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 impl ToSocketAddrsDomain for TargetAddr {
     fn domain(&self) -> Option<&str> {
         match self {
@@ -321,14 +315,8 @@ impl RawClient<ElectrumSslStream> {
     }
 }
 
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
+#[allow(unused)]
 mod danger {
     use crate::raw_client::ServerName;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
@@ -382,21 +370,13 @@ mod danger {
 }
 
 #[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
+    any(feature = "use-rustls", feature = "use-rustls-ring"),
     not(feature = "use-openssl")
 ))]
 /// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
 pub type ElectrumSslStream = StreamOwned<ClientConnection, TcpStream>;
 #[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
+    any(feature = "use-rustls", feature = "use-rustls-ring"),
     not(feature = "use-openssl")
 ))]
 impl RawClient<ElectrumSslStream> {
