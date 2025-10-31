@@ -24,23 +24,12 @@ extern crate core;
 extern crate log;
 #[cfg(feature = "use-openssl")]
 extern crate openssl;
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
 extern crate rustls;
 extern crate serde;
 extern crate serde_json;
 
-#[cfg(any(
-    feature = "default",
-    feature = "use-rustls",
-    feature = "use-rustls-ring"
-))]
+#[cfg(any(feature = "use-rustls", feature = "use-rustls-ring"))]
 extern crate webpki_roots;
 
 #[cfg(feature = "proxy")]
