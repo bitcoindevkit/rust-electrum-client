@@ -32,8 +32,7 @@ jobs:
         run: cargo test --verbose --all-features
       - run: cargo check --verbose --features=use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy
-      - run: cargo check --verbose --no-default-features --features=minimal
-      - run: cargo check --verbose --no-default-features --features=minimal,debug-calls
+      - run: cargo check --verbose --no-default-features --features=debug-calls
       - run: cargo check --verbose --no-default-features --features=proxy,use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls-ring
