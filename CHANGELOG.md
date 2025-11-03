@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1]
+ - Default to `ring` if multiple `rustls` features are set #183
+
 ## [0.24.0]
  - Use default `CryptoProvider` if available, otherwise install `rustls`'s `CryptoProvider` based on features #171
  - Add a new batch method for `blockchain.transaction.get_merkle` #170
@@ -59,4 +62,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.23.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.22.0...0.23.0
 [0.23.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.0...0.23.1
 [0.24.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.1...0.24.0
-[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.0...HEAD
+[0.24.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.0...0.24.1
+[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.1...HEAD
