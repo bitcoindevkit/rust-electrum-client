@@ -41,6 +41,7 @@ jobs:
       - run: cargo check --verbose --no-default-features --features=proxy,use-openssl
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls
       - run: cargo check --verbose --no-default-features --features=proxy,use-rustls-ring
+      - run: cargo check --verbose --no-default-features --features=proxy,use-rustls,use-rustls-ring
 
   fmt:
     name: Rust fmt
