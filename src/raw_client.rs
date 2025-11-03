@@ -408,7 +408,7 @@ impl RawClient<ElectrumSslStream> {
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             // We install a crypto provider depending on the set feature.
-            #[cfg(feature = "use-rustls")]
+            #[cfg(all(feature = "use-rustls", not(feature = "use-rustls-ring")))]
             rustls::crypto::CryptoProvider::install_default(
                 rustls::crypto::aws_lc_rs::default_provider(),
             )
@@ -449,7 +449,7 @@ impl RawClient<ElectrumSslStream> {
             builder
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
-                    #[cfg(feature = "use-rustls")]
+                    #[cfg(all(feature = "use-rustls", not(feature = "use-rustls-ring")))]
                     danger::NoCertificateVerification::new(rustls::crypto::aws_lc_rs::default_provider()),
                     #[cfg(feature = "use-rustls-ring")]
                     danger::NoCertificateVerification::new(rustls::crypto::ring::default_provider()),
