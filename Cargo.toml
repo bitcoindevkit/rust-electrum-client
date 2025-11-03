@@ -39,7 +39,6 @@ winapi = { version="0.3.9", features=["winsock2"], optional = true }
 
 [features]
 default = ["proxy", "rustls"]
-minimal = []
 debug-calls = []
 proxy = ["byteorder", "winapi", "libc"]
 rustls = ["webpki-roots", "dep:rustls", "rustls/default"]
