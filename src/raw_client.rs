@@ -159,7 +159,6 @@ where
     /// The protocol version negotiated with the server via `server.version`.
     protocol_version: Mutex<Option<String>>,
 
-    #[cfg(feature = "debug-calls")]
     calls: AtomicUsize,
 }
 
@@ -182,7 +181,6 @@ where
 
             protocol_version: Mutex::new(None),
 
-            #[cfg(feature = "debug-calls")]
             calls: AtomicUsize::new(0),
         }
     }
@@ -812,14 +810,9 @@ impl<S: Read + Write> RawClient<S> {
     }
 
     #[inline]
-    #[cfg(feature = "debug-calls")]
     fn increment_calls(&self) {
         self.calls.fetch_add(1, Ordering::SeqCst);
     }
-
-    #[inline]
-    #[cfg(not(feature = "debug-calls"))]
-    fn increment_calls(&self) {}
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
@@ -1309,7 +1302,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(())
     }
 
-    #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         Ok(self.calls.load(Ordering::SeqCst))
     }

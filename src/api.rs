@@ -187,7 +187,6 @@ where
         (**self).ping()
     }
 
-    #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         (**self).calls_made()
     }
@@ -453,7 +452,6 @@ pub trait ElectrumApi {
     /// of incoming block header or script notifications.
     fn ping(&self) -> Result<(), Error>;
 
-    #[cfg(feature = "debug-calls")]
     /// Returns the number of network calls made since the creation of the client.
     fn calls_made(&self) -> Result<usize, Error>;
 }
@@ -677,7 +675,6 @@ mod test {
             unreachable!()
         }
 
-        #[cfg(feature = "debug-calls")]
         fn calls_made(&self) -> Result<usize, super::Error> {
             unreachable!()
         }

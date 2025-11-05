@@ -404,7 +404,6 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         impl_inner_call!(self, calls_made)
     }
