@@ -136,7 +136,6 @@ where
     headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
-    #[cfg(feature = "debug-calls")]
     calls: AtomicUsize,
 }
 
@@ -157,7 +156,6 @@ where
             headers: Mutex::new(VecDeque::new()),
             script_notifications: Mutex::new(HashMap::new()),
 
-            #[cfg(feature = "debug-calls")]
             calls: AtomicUsize::new(0),
         }
     }
@@ -741,14 +739,9 @@ impl<S: Read + Write> RawClient<S> {
     }
 
     #[inline]
-    #[cfg(feature = "debug-calls")]
     fn increment_calls(&self) {
         self.calls.fetch_add(1, Ordering::SeqCst);
     }
-
-    #[inline]
-    #[cfg(not(feature = "debug-calls"))]
-    fn increment_calls(&self) {}
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
@@ -1169,7 +1162,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(())
     }
 
-    #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         Ok(self.calls.load(Ordering::SeqCst))
     }
