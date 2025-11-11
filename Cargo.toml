@@ -38,10 +38,13 @@ libc = { version = "0.2", optional = true }
 winapi = { version="0.3.9", features=["winsock2"], optional = true }
 
 [features]
-default = ["proxy", "use-rustls"]
-minimal = []
-debug-calls = []
+default = ["proxy", "rustls"]
 proxy = ["byteorder", "winapi", "libc"]
-use-rustls = ["webpki-roots", "rustls/default"]
-use-rustls-ring = ["webpki-roots", "rustls/ring", "rustls/logging", "rustls/std", "rustls/tls12"]
+rustls = ["webpki-roots", "dep:rustls", "rustls/default"]
+rustls-ring = ["webpki-roots", "dep:rustls", "rustls/ring", "rustls/logging", "rustls/std", "rustls/tls12"]
+openssl = ["dep:openssl"]
+
+# Old feature names
+use-rustls = ["rustls"]
+use-rustls-ring = ["rustls-ring"]
 use-openssl = ["openssl"]
