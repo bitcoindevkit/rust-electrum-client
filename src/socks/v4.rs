@@ -18,12 +18,7 @@ fn read_response(socket: &mut TcpStream) -> io::Result<SocketAddrV4> {
 
     match response.read_u8()? {
         90 => {}
-        91 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "request rejected or failed",
-            ))
-        }
+        91 => return Err(io::Error::other("request rejected or failed")),
         92 => {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

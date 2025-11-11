@@ -448,7 +448,9 @@ mod tests {
         let now = Instant::now();
         let client = Client::from_config(
             &endpoint,
-            crate::config::ConfigBuilder::new().timeout(Some(5)).build(),
+            crate::config::ConfigBuilder::new()
+                .timeout(Some(Duration::from_secs(5)))
+                .build(),
         );
         let elapsed = now.elapsed();
 

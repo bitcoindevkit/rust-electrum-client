@@ -37,10 +37,7 @@ fn read_addr<R: Read>(socket: &mut R) -> io::Result<TargetAddr> {
                 ip, port, 0, 0,
             ))))
         }
-        _ => Err(io::Error::new(
-            io::ErrorKind::Other,
-            "unsupported address type",
-        )),
+        _ => Err(io::Error::other("unsupported address type")),
     }
 }
 
@@ -54,35 +51,15 @@ fn read_response(socket: &mut TcpStream) -> io::Result<TargetAddr> {
 
     match socket.read_u8()? {
         0 => {}
-        1 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "general SOCKS server failure",
-            ))
-        }
-        2 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "connection not allowed by ruleset",
-            ))
-        }
-        3 => return Err(io::Error::new(io::ErrorKind::Other, "network unreachable")),
-        4 => return Err(io::Error::new(io::ErrorKind::Other, "host unreachable")),
-        5 => return Err(io::Error::new(io::ErrorKind::Other, "connection refused")),
-        6 => return Err(io::Error::new(io::ErrorKind::Other, "TTL expired")),
-        7 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "command not supported",
-            ))
-        }
-        8 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "address kind not supported",
-            ))
-        }
-        _ => return Err(io::Error::new(io::ErrorKind::Other, "unknown error")),
+        1 => return Err(io::Error::other("general SOCKS server failure")),
+        2 => return Err(io::Error::other("connection not allowed by ruleset")),
+        3 => return Err(io::Error::other("network unreachable")),
+        4 => return Err(io::Error::other("host unreachable")),
+        5 => return Err(io::Error::other("connection refused")),
+        6 => return Err(io::Error::other("TTL expired")),
+        7 => return Err(io::Error::other("command not supported")),
+        8 => return Err(io::Error::other("address kind not supported")),
+        _ => return Err(io::Error::other("unknown error")),
     }
 
     if socket.read_u8()? != 0 {
@@ -227,14 +204,11 @@ impl Socks5Stream {
         }
 
         if selected_method == 0xff {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "no acceptable auth methods",
-            ));
+            return Err(io::Error::other("no acceptable auth methods"));
         }
 
         if selected_method != auth.id() && selected_method != Authentication::None.id() {
-            return Err(io::Error::new(io::ErrorKind::Other, "unknown auth method"));
+            return Err(io::Error::other("unknown auth method"));
         }
 
         match *auth {
