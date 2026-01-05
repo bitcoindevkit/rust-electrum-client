@@ -285,9 +285,39 @@ impl RawClient<ElectrumSslStream> {
             .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
 
+        if !validate_domain {
+            let store = TofuData::setup()
+                .map_err(|e| Error::TofuPersistError(e.to_string()))?;
+
+            if let Some(peer_cert) = stream.ssl().peer_certificate() {
+                let der = peer_cert.to_der()
+                    .map_err(|e| Error::TofuPersistError(e.to_string()))?;
+
+                match store.getData(&domain).map_err(|e| Error::TofuPersistError(e.to_string()))? {
+                    Some(saved_der) => {
+                        if saved_der != der {
+                            return Err(Error::TlsCertificateChanged(domain));
+                        }
+                    }
+                    None => {
+                        // first time: persist certificate
+                        store
+                            .setData(&domain, der)
+                            .map_err(|e| Error::TofuPersistError(e.to_string()))?;
+                    }
+                }
+            } else {
+                return Err(Error::TofuPersistError(
+                    "Peer Certificate not available".to_string(),
+                ));
+            }
+        }
+
         Ok(stream.into())
     }
 }
+
+
 
 #[cfg(all(
     any(
@@ -299,10 +329,12 @@ impl RawClient<ElectrumSslStream> {
 ))]
 mod danger {
     use crate::raw_client::ServerName;
+    use crate::tofu::TofuData;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
     use rustls::crypto::CryptoProvider;
     use rustls::pki_types::{CertificateDer, UnixTime};
     use rustls::DigitallySignedStruct;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Debug)]
     pub struct NoCertificateVerification(CryptoProvider);
@@ -347,6 +379,94 @@ mod danger {
             self.0.signature_verification_algorithms.supported_schemes()
         }
     }
+    
+    #[derive(Debug)]
+    pub struct TofuVerifier {
+        provider: CryptoProvider,
+        host: String,
+        tofu_store: Arc<Mutex<Option<Arc<TofuData>>>>,
+    }
+
+    impl TofuVerifier {
+        pub fn new(provider: CryptoProvider, host: String) -> Self {
+            Self {
+                provider,
+                host,
+                tofu_store: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        fn get_tofu_store(&self) -> Result<Arc<TofuData>, crate::Error> {
+            let mut store = self.tofu_store.lock().unwrap();
+            if store.is_none() {
+                *store = Some(Arc::new(
+                    TofuData::setup()
+                        .map_err(|e| crate::Error::TofuPersistError(e.to_string()))?,
+                ));
+            }
+            Ok(store.as_ref().unwrap().clone())
+        }
+
+        fn verify_tofu(&self, cert_der: &[u8]) -> Result<(), crate::Error> {
+            let store = self.get_tofu_store()?;
+            match store
+                .getData(&self.host)
+                .map_err(|e| crate::Error::TofuPersistError(e.to_string()))?
+            {
+                Some(saved_der) => {
+                    if saved_der != cert_der {
+                        return Err(crate::Error::TlsCertificateChanged(self.host.clone()));
+                    }
+                }
+                None => {
+                    // First time: persist certificate.
+                    store
+                        .setData(&self.host, cert_der.to_vec())
+                        .map_err(|e| crate::Error::TofuPersistError(e.to_string()))?;
+                }
+            }
+
+            Ok(())
+        }
+    }
+
+    impl rustls::client::danger::ServerCertVerifier for TofuVerifier {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            // Verify using TOFU
+            self.verify_tofu(end_entity.as_ref())
+                .map_err(|e| rustls::Error::General(format!("{:?}", e)))?;
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &CertificateDer<'_>,
+            _dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            self.provider.signature_verification_algorithms.supported_schemes()
+        }
+    }
 }
 
 #[cfg(all(
@@ -381,6 +501,7 @@ impl RawClient<ElectrumSslStream> {
             validate_domain,
             timeout
         );
+
         if validate_domain {
             socket_addrs.domain().ok_or(Error::MissingDomain)?;
         }
@@ -431,6 +552,7 @@ impl RawClient<ElectrumSslStream> {
 
         let builder = ClientConfig::builder();
 
+        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
         let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
@@ -450,20 +572,28 @@ impl RawClient<ElectrumSslStream> {
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
                     #[cfg(all(feature = "use-rustls", not(feature = "use-rustls-ring")))]
-                    danger::NoCertificateVerification::new(rustls::crypto::aws_lc_rs::default_provider()),
+                    danger::TofuVerifier::new(rustls::crypto::aws_lc_rs::default_provider(), domain.clone()),
                     #[cfg(feature = "use-rustls-ring")]
-                    danger::NoCertificateVerification::new(rustls::crypto::ring::default_provider()),
+                    danger::TofuVerifier::new(rustls::crypto::ring::default_provider(), domain.clone()),
                 ))
                 .with_no_client_auth()
         };
 
-        let domain = socket_addr.domain().unwrap_or("NONE").to_string();
         let session = ClientConnection::new(
             std::sync::Arc::new(config),
             ServerName::try_from(domain.clone())
                 .map_err(|_| Error::InvalidDNSNameError(domain.clone()))?,
         )
-        .map_err(Error::CouldNotCreateConnection)?;
+        .map_err(|e| {
+            let error_msg = format!("{}", e);
+            if error_msg.contains("TLS certificate changed") {
+                Error::TlsCertificateChanged(domain.clone())
+            } else if error_msg.contains("TOFU") {
+                Error::TofuPersistError(error_msg)
+            } else {
+                Error::CouldNotCreateConnection(e)
+            }
+        })?;
         let stream = StreamOwned::new(session, tcp_stream);
 
         Ok(stream.into())

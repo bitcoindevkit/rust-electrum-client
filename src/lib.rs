@@ -81,3 +81,5 @@ pub use batch::Batch;
 pub use client::*;
 pub use config::{Config, ConfigBuilder, Socks5Config};
 pub use types::*;
+
+mod tofu;
