@@ -207,8 +207,8 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
-        impl_inner_call!(self, estimate_fee, number)
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
+        impl_inner_call!(self, estimate_fee, number, mode)
     }
 
     #[inline]

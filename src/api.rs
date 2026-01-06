@@ -42,8 +42,8 @@ where
         (**self).block_headers(start_height, count)
     }
 
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
-        (**self).estimate_fee(number)
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
+        (**self).estimate_fee(number, mode)
     }
 
     fn relay_fee(&self) -> Result<f64, Error> {
@@ -272,7 +272,10 @@ pub trait ElectrumApi {
     fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error>;
 
     /// Estimates the fee required in **Bitcoin per kilobyte** to confirm a transaction in `number` blocks.
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error>;
+    ///
+    /// Optionally takes an [`EstimationMode`] parameter to specify the fee estimation mode.
+    /// This parameter was added in protocol v1.6.
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error>;
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
     fn relay_fee(&self) -> Result<f64, Error>;
@@ -459,7 +462,11 @@ mod test {
             unreachable!()
         }
 
-        fn estimate_fee(&self, _: usize) -> Result<f64, super::Error> {
+        fn estimate_fee(
+            &self,
+            _: usize,
+            _: Option<super::EstimationMode>,
+        ) -> Result<f64, super::Error> {
             unreachable!()
         }
 

@@ -938,11 +938,15 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(deserialized)
     }
 
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
+        let mut params = vec![Param::Usize(number)];
+        if let Some(mode) = mode {
+            params.push(Param::String(mode.to_string()));
+        }
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.estimatefee",
-            vec![Param::Usize(number)],
+            params,
         );
         let result = self.call(req)?;
 
@@ -1147,7 +1151,19 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         I: IntoIterator + Clone,
         I::Item: Borrow<usize>,
     {
-        impl_batch_call!(self, numbers, estimate_fee, apply_deref)
+        let mut batch = Batch::default();
+        for i in numbers {
+            batch.estimate_fee(*i.borrow(), None);
+        }
+
+        let resp = self.batch_call(&batch)?;
+        let mut answer = Vec::new();
+
+        for x in resp {
+            answer.push(serde_json::from_value(x)?);
+        }
+
+        Ok(answer)
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
@@ -1328,7 +1344,7 @@ mod test {
     fn test_estimate_fee() {
         let client = get_test_client();
 
-        let resp = client.estimate_fee(10).unwrap();
+        let resp = client.estimate_fee(10, None).unwrap();
         assert!(resp > 0.0);
     }
 

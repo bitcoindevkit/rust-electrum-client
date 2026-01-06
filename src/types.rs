@@ -37,6 +37,29 @@ pub enum Param {
     StringVec(Vec<String>),
 }
 
+/// Fee estimation mode for [`estimate_fee`](../api/trait.ElectrumApi.html#method.estimate_fee).
+///
+/// This parameter was added in protocol v1.6 and is passed to bitcoind's
+/// `estimatesmartfee` RPC as the `estimate_mode` parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstimationMode {
+    /// A conservative estimate potentially returns a higher feerate and is more likely to be
+    /// sufficient for the desired target, but is not as responsive to short term drops in the
+    /// prevailing fee market.
+    Conservative,
+    /// Economical fee estimate - potentially lower fees but may take longer to confirm.
+    Economical,
+}
+
+impl Display for EstimationMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            EstimationMode::Conservative => write!(f, "CONSERVATIVE"),
+            EstimationMode::Economical => write!(f, "ECONOMICAL"),
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 /// A request that can be sent to the server
 pub struct Request<'a> {
