@@ -45,6 +45,15 @@ use crate::api::ElectrumApi;
 use crate::batch::Batch;
 use crate::types::*;
 
+/// Client name sent to the server during protocol version negotiation.
+pub const CLIENT_NAME: &str = "";
+
+/// Minimum protocol version supported by this client.
+pub const PROTOCOL_VERSION_MIN: &str = "1.4";
+
+/// Maximum protocol version supported by this client.
+pub const PROTOCOL_VERSION_MAX: &str = "1.6";
+
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
         impl_batch_call!($self, $data, $call, )
@@ -142,6 +151,9 @@ where
     headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
+    /// The protocol version negotiated with the server via `server.version`.
+    protocol_version: Mutex<Option<String>>,
+
     #[cfg(feature = "debug-calls")]
     calls: AtomicUsize,
 }
@@ -163,6 +175,8 @@ where
             headers: Mutex::new(VecDeque::new()),
             script_notifications: Mutex::new(HashMap::new()),
 
+            protocol_version: Mutex::new(None),
+
             #[cfg(feature = "debug-calls")]
             calls: AtomicUsize::new(0),
         }
@@ -173,6 +187,9 @@ where
 pub type ElectrumPlaintextStream = TcpStream;
 impl RawClient<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
+    ///
+    /// Automatically negotiates the protocol version with the server using
+    /// `server.version` as required by the Electrum protocol.
     pub fn new<A: ToSocketAddrs>(
         socket_addrs: A,
         timeout: Option<Duration>,
@@ -187,7 +204,9 @@ impl RawClient<ElectrumPlaintextStream> {
             None => TcpStream::connect(socket_addrs)?,
         };
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -285,7 +304,9 @@ impl RawClient<ElectrumSslStream> {
             .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -466,7 +487,9 @@ impl RawClient<ElectrumSslStream> {
         .map_err(Error::CouldNotCreateConnection)?;
         let stream = StreamOwned::new(session, tcp_stream);
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -496,7 +519,9 @@ impl RawClient<ElectrumProxyStream> {
         stream.get_mut().set_read_timeout(timeout)?;
         stream.get_mut().set_write_timeout(timeout)?;
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 
     #[cfg(any(
@@ -550,6 +575,30 @@ impl<S: Read + Write> RawClient<S> {
     // pub fn reader_thread(&self) -> Result<(), Error> {
     //     self._reader_thread(None).map(|_| ())
     // }
+
+    /// Negotiates the protocol version with the server.
+    ///
+    /// This sends `server.version` as the first message and stores the negotiated
+    /// protocol version. Called automatically by constructors.
+    fn negotiate_protocol_version(&self) -> Result<(), Error> {
+        let version_range = vec![
+            PROTOCOL_VERSION_MIN.to_string(),
+            PROTOCOL_VERSION_MAX.to_string(),
+        ];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "server.version",
+            vec![
+                Param::String(CLIENT_NAME.to_string()),
+                Param::StringVec(version_range),
+            ],
+        );
+        let result = self.call(req)?;
+        let response: ServerVersionRes = serde_json::from_value(result)?;
+
+        *self.protocol_version.lock()? = Some(response.protocol_version);
+        Ok(())
+    }
 
     fn _reader_thread(&self, until_message: Option<usize>) -> Result<serde_json::Value, Error> {
         let mut raw_resp = String::new();

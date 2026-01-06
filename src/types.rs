@@ -33,6 +33,8 @@ pub enum Param {
     Bool(bool),
     /// Bytes array parameter
     Bytes(Vec<u8>),
+    /// String array parameter
+    StringVec(Vec<String>),
 }
 
 #[derive(Serialize, Clone)]
@@ -202,7 +204,29 @@ pub struct ServerFeaturesRes {
     pub pruning: Option<i64>,
 }
 
-/// Response to a [`server_features`](../client/struct.Client.html#method.server_features) request.
+/// Response to a [`server_version`](../client/struct.Client.html#method.server_version) request.
+///
+/// This is returned as an array of two strings: `[server_software_version, protocol_version]`.
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(from = "(String, String)")]
+pub struct ServerVersionRes {
+    /// Server software version string (e.g., "ElectrumX 1.18.0").
+    pub server_software_version: String,
+    /// Negotiated protocol version (e.g., "1.6").
+    pub protocol_version: String,
+}
+
+impl From<(String, String)> for ServerVersionRes {
+    fn from((server_software_version, protocol_version): (String, String)) -> Self {
+        Self {
+            server_software_version,
+            protocol_version,
+        }
+    }
+}
+
+/// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request.
 #[derive(Clone, Debug, Deserialize)]
 pub struct GetHeadersRes {
     /// Maximum number of headers returned in a single response.
