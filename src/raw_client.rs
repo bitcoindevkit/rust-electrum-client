@@ -1212,6 +1212,25 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn transaction_broadcast_package_raw<Tx: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[Tx],
+    ) -> Result<BroadcastPackageRes, Error> {
+        let hex_txs: Vec<String> = raw_txs
+            .iter()
+            .map(|tx| tx.as_ref().to_lower_hex_string())
+            .collect();
+        let params = vec![Param::StringVec(hex_txs)];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.broadcast_package",
+            params,
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         let params = vec![Param::String(format!("{:x}", txid)), Param::Usize(height)];
         let req = Request::new_id(
@@ -1345,6 +1364,16 @@ mod test {
         assert!(resp.mempoolminfee >= 0.0);
         assert!(resp.minrelaytxfee >= 0.0);
         assert!(resp.incrementalrelayfee >= 0.0);
+    }
+
+    #[test]
+    fn test_transaction_broadcast_package() {
+        let client = get_test_client();
+
+        // Empty package should return an error or unsuccessful response
+        let resp = client.transaction_broadcast_package_raw::<Vec<u8>>(&[]);
+        // The server may reject an empty package with a protocol error
+        assert!(resp.is_err() || !resp.unwrap().success);
     }
 
     #[test]

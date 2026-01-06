@@ -141,6 +141,13 @@ where
         (**self).transaction_broadcast_raw(raw_tx)
     }
 
+    fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<BroadcastPackageRes, Error> {
+        (**self).transaction_broadcast_package_raw(raw_txs)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         (**self).transaction_get_merkle(txid, height)
     }
@@ -243,6 +250,21 @@ pub trait ElectrumApi {
     fn transaction_broadcast(&self, tx: &Transaction) -> Result<Txid, Error> {
         let buffer: Vec<u8> = serialize(tx);
         self.transaction_broadcast_raw(&buffer)
+    }
+
+    /// Broadcasts a package of transactions to the network.
+    ///
+    /// The package must consist of a child with its parents, where none of the parents
+    /// depend on one another. The package must be topologically sorted, with the child
+    /// being the last element in the array.
+    ///
+    /// This method was added in protocol v1.6 for package relay support.
+    fn transaction_broadcast_package(
+        &self,
+        txs: &[Transaction],
+    ) -> Result<BroadcastPackageRes, Error> {
+        let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
+        self.transaction_broadcast_package_raw(&raw_txs)
     }
 
     /// Executes the requested API call returning the raw answer.
@@ -376,6 +398,18 @@ pub trait ElectrumApi {
 
     /// Broadcasts the raw bytes of a transaction to the network.
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error>;
+
+    /// Broadcasts a package of raw transactions to the network.
+    ///
+    /// The package must consist of a child with its parents, where none of the parents
+    /// depend on one another. The package must be topologically sorted, with the child
+    /// being the last element in the array.
+    ///
+    /// This method was added in protocol v1.6 for package relay support.
+    fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<BroadcastPackageRes, Error>;
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
@@ -586,6 +620,13 @@ mod test {
         }
 
         fn transaction_broadcast_raw(&self, _: &[u8]) -> Result<bitcoin::Txid, super::Error> {
+            unreachable!()
+        }
+
+        fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+            &self,
+            _: &[T],
+        ) -> Result<super::BroadcastPackageRes, super::Error> {
             unreachable!()
         }
 

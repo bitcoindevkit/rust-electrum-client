@@ -327,6 +327,29 @@ pub struct TxidFromPosRes {
     pub merkle: Vec<[u8; 32]>,
 }
 
+/// Error details for a transaction that failed to broadcast in a package.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BroadcastPackageError {
+    /// The txid of the transaction that failed.
+    pub txid: Txid,
+    /// The error message describing why the transaction was rejected.
+    pub error: String,
+}
+
+/// Response to a [`transaction_broadcast_package`](../client/struct.Client.html#method.transaction_broadcast_package)
+/// request.
+///
+/// This method was added in protocol v1.6 for package relay support.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BroadcastPackageRes {
+    /// Whether the package was successfully accepted by the mempool.
+    pub success: bool,
+    /// List of errors for transactions that were rejected.
+    /// Only present if some transactions failed.
+    #[serde(default)]
+    pub errors: Vec<BroadcastPackageError>,
+}
+
 /// Notification of a new block header
 #[derive(Clone, Debug, Deserialize)]
 pub struct HeaderNotification {

@@ -323,6 +323,14 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<BroadcastPackageRes, Error> {
+        impl_inner_call!(self, transaction_broadcast_package_raw, raw_txs)
+    }
+
+    #[inline]
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         impl_inner_call!(self, transaction_get_merkle, txid, height)
     }
