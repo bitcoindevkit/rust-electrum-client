@@ -300,6 +300,10 @@ pub trait ElectrumApi {
     fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error>;
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
+    ///
+    /// **Note:** This method was removed in protocol v1.6+. Use
+    /// [`mempool_get_info`](#method.mempool_get_info) instead, which provides `minrelaytxfee`
+    /// along with additional mempool fee information.
     fn relay_fee(&self) -> Result<f64, Error>;
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.

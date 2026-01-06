@@ -1396,14 +1396,6 @@ mod test {
     }
 
     #[test]
-    fn test_relay_fee() {
-        let client = get_test_client();
-
-        let resp = client.relay_fee().unwrap();
-        assert!(resp > 0.0);
-    }
-
-    #[test]
     fn test_estimate_fee() {
         let client = get_test_client();
 
