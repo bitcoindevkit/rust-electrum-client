@@ -264,6 +264,20 @@ pub struct MempoolInfoRes {
     pub incrementalrelayfee: f64,
 }
 
+/// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request (protocol v1.4, legacy format).
+///
+/// In protocol v1.4, the headers are returned as a single concatenated hex string.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GetHeadersResLegacy {
+    /// Maximum number of headers returned in a single response.
+    pub max: usize,
+    /// Number of headers in this response.
+    pub count: usize,
+    /// Raw headers concatenated.
+    #[serde(rename(deserialize = "hex"), deserialize_with = "from_hex")]
+    pub raw_headers: Vec<u8>,
+}
+
 /// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request.
 #[derive(Clone, Debug, Deserialize)]
 pub struct GetHeadersRes {
@@ -271,10 +285,10 @@ pub struct GetHeadersRes {
     pub max: usize,
     /// Number of headers in this response.
     pub count: usize,
-    /// Raw headers concatenated. Normally cleared before returning.
-    #[serde(rename(deserialize = "hex"), deserialize_with = "from_hex")]
-    pub raw_headers: Vec<u8>,
-    /// Array of block headers.
+    /// Array of header hex strings (v1.6 format).
+    #[serde(default, rename(deserialize = "headers"))]
+    pub(crate) header_hexes: Vec<String>,
+    /// Array of block headers (populated after parsing).
     #[serde(skip)]
     pub headers: Vec<block::Header>,
 }

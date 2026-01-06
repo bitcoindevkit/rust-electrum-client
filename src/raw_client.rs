@@ -54,6 +54,17 @@ pub const PROTOCOL_VERSION_MIN: &str = "1.4";
 /// Maximum protocol version supported by this client.
 pub const PROTOCOL_VERSION_MAX: &str = "1.6";
 
+/// Checks if a protocol version string is at least the specified major.minor version.
+fn is_protocol_version_at_least(version: &str, major: u32, minor: u32) -> bool {
+    let mut parts = version.split('.');
+    let v_major = parts.next().and_then(|s| s.parse::<u32>().ok());
+    let v_minor = parts.next().and_then(|s| s.parse::<u32>().ok());
+    match (v_major, v_minor) {
+        (Some(v_major), Some(v_minor)) => v_major > major || (v_major == major && v_minor >= minor),
+        _ => false,
+    }
+}
+
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
         impl_batch_call!($self, $data, $call, )
@@ -926,16 +937,39 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         );
         let result = self.call(req)?;
 
-        let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
-        for i in 0..deserialized.count {
-            let (start, end) = (i * 80, (i + 1) * 80);
-            deserialized
-                .headers
-                .push(deserialize(&deserialized.raw_headers[start..end])?);
-        }
-        deserialized.raw_headers.clear();
+        // Check protocol version to determine response format
+        let is_v1_6_or_later = {
+            let protocol_version = self.protocol_version.lock()?;
+            protocol_version
+                .as_ref()
+                .map(|v| is_protocol_version_at_least(v, 1, 6))
+                .unwrap_or(false)
+        };
 
-        Ok(deserialized)
+        if is_v1_6_or_later {
+            // v1.6+: headers field contains array of hex strings
+            let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
+            for header_hex in &deserialized.header_hexes {
+                let header_bytes = Vec::<u8>::from_hex(header_hex)?;
+                deserialized.headers.push(deserialize(&header_bytes)?);
+            }
+            deserialized.header_hexes.clear();
+            Ok(deserialized)
+        } else {
+            // v1.4: hex field contains concatenated headers
+            let deserialized: GetHeadersResLegacy = serde_json::from_value(result)?;
+            let mut headers = Vec::new();
+            for i in 0..deserialized.count {
+                let (start, end) = (i * 80, (i + 1) * 80);
+                headers.push(deserialize(&deserialized.raw_headers[start..end])?);
+            }
+            Ok(GetHeadersRes {
+                max: deserialized.max,
+                count: deserialized.count,
+                header_hexes: Vec::new(),
+                headers,
+            })
+        }
     }
 
     fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
