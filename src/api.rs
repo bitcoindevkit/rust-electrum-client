@@ -172,6 +172,10 @@ where
         (**self).server_features()
     }
 
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
+        (**self).mempool_get_info()
+    }
+
     fn ping(&self) -> Result<(), Error> {
         (**self).ping()
     }
@@ -398,6 +402,12 @@ pub trait ElectrumApi {
     /// Returns the capabilities of the server.
     fn server_features(&self) -> Result<ServerFeaturesRes, Error>;
 
+    /// Returns information about the current state of the mempool.
+    ///
+    /// This method was added in protocol v1.6 and replaces `relay_fee` by providing
+    /// `minrelaytxfee` along with additional mempool fee information.
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error>;
+
     /// Pings the server. This method can also be used as a "dummy" call to trigger the processing
     /// of incoming block header or script notifications.
     fn ping(&self) -> Result<(), Error>;
@@ -604,6 +614,10 @@ mod test {
         }
 
         fn server_features(&self) -> Result<super::ServerFeaturesRes, super::Error> {
+            unreachable!()
+        }
+
+        fn mempool_get_info(&self) -> Result<super::MempoolInfoRes, super::Error> {
             unreachable!()
         }
 

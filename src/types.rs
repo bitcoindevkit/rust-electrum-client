@@ -226,6 +226,21 @@ impl From<(String, String)> for ServerVersionRes {
     }
 }
 
+/// Response to a [`mempool_get_info`](../client/struct.Client.html#method.mempool_get_info) request.
+///
+/// Contains information about the current state of the mempool.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolInfoRes {
+    /// Dynamic minimum fee rate in BTC/kvB for tx to be accepted given current conditions.
+    /// The maximum of `minrelaytxfee` and minimum mempool fee.
+    pub mempoolminfee: f64,
+    /// Static operator-configurable minimum relay fee for transactions, in BTC/kvB.
+    pub minrelaytxfee: f64,
+    /// Static operator-configurable minimum fee rate increment for mempool limiting or
+    /// replacement, in BTC/kvB.
+    pub incrementalrelayfee: f64,
+}
+
 /// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request.
 #[derive(Clone, Debug, Deserialize)]
 pub struct GetHeadersRes {

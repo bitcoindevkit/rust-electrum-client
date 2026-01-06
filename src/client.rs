@@ -363,6 +363,11 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
+        impl_inner_call!(self, mempool_get_info)
+    }
+
+    #[inline]
     fn ping(&self) -> Result<(), Error> {
         impl_inner_call!(self, ping)
     }

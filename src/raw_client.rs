@@ -1228,6 +1228,17 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "mempool.get_info",
+            vec![],
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn ping(&self) -> Result<(), Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -1274,6 +1285,16 @@ mod test {
         );
         assert_eq!(resp.hash_function, Some("sha256".into()));
         assert_eq!(resp.pruning, None);
+    }
+
+    #[test]
+    fn test_mempool_get_info() {
+        let client = get_test_client();
+
+        let resp = client.mempool_get_info().unwrap();
+        assert!(resp.mempoolminfee >= 0.0);
+        assert!(resp.minrelaytxfee >= 0.0);
+        assert!(resp.incrementalrelayfee >= 0.0);
     }
 
     #[test]
