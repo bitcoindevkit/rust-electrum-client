@@ -48,6 +48,8 @@ use crate::api::ElectrumApi;
 use crate::batch::Batch;
 use crate::types::*;
 
+use crate::TofuStore;
+
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
         impl_batch_call!($self, $data, $call, )
@@ -302,9 +304,9 @@ impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client with TOFU (Trust On First Use) certificate validation.
     /// This method establishes an SSL connection and verify certificates. On first connection, 
     /// the certificate is stored. On subsequent onnections, the certificate must match the stored one.
-    pub fn new_ssl_with_tofu<S: crate::TofuStore + 'static>(
+    pub fn new_ssl_with_tofu(
         socket_addrs: &dyn ToSocketAddrsDomain,
-        tofu_store: std::sync::Arc<S>,
+        tofu_store: std::sync::Arc<dyn TofuStore>,
         stream: TcpStream,
     ) -> Result<Self, Error> {
         let mut builder =
@@ -420,10 +422,10 @@ mod danger {
     }
 
     impl TofuVerifier {
-        pub fn new<S: TofuStore + 'static>(
+        pub fn new(
             provider: CryptoProvider,
             host: String,
-            tofu_store: Arc<S>,
+            tofu_store: Arc<dyn TofuStore>,
         ) -> Self {
             Self {
                 provider,
@@ -628,9 +630,9 @@ impl RawClient<ElectrumSslStream> {
     /// Create a new SSL client with TOFU (Trust On First Use) certificate validation.
     /// This method establishes an SSL connection and verify certificates. On first connection, 
     /// the certificate is stored. On subsequent connections, the certificate must match the stored one.
-    pub fn new_ssl_with_tofu<A: ToSocketAddrsDomain + Clone, S: crate::TofuStore + 'static>(
+    pub fn new_ssl_with_tofu<A: ToSocketAddrsDomain + Clone>(
         socket_addrs: A,
-        tofu_store: std::sync::Arc<S>,
+        tofu_store: std::sync::Arc<dyn TofuStore>,
         timeout: Option<Duration>,
     ) -> Result<Self, Error> {
 

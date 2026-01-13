@@ -1,4 +1,6 @@
 use std::time::Duration;
+use std::sync::Arc;
+use crate::tofu::TofuStore;
 
 /// Configuration for an electrum client
 ///
@@ -16,6 +18,8 @@ pub struct Config {
     retry: u8,
     /// when ssl, validate the domain, default true
     validate_domain: bool,
+    /// TOFU store for certificate validation
+    tofu_store: Option<Arc<dyn TofuStore>>,
 }
 
 /// Configuration for Socks5
@@ -69,6 +73,12 @@ impl ConfigBuilder {
     /// Sets if the domain has to be validated
     pub fn validate_domain(mut self, validate_domain: bool) -> Self {
         self.config.validate_domain = validate_domain;
+        self
+    }
+
+    /// Sets the TOFU store
+    pub fn tofu_store<S: TofuStore + 'static>(mut self, store: Arc<S>) -> Self {
+        self.config.tofu_store = Some(store);
         self
     }
 
@@ -131,6 +141,13 @@ impl Config {
         self.validate_domain
     }
 
+    /// Get the TOFU store
+    ///
+    /// Set this with [`ConfigBuilder::tofu_store`]
+    pub fn tofu_store(&self) -> &Option<Arc<dyn TofuStore>> {
+        &self.tofu_store
+    }
+
     /// Convenience method for calling [`ConfigBuilder::new`]
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
@@ -144,6 +161,7 @@ impl Default for Config {
             timeout: None,
             retry: 1,
             validate_domain: true,
+            tofu_store: None,
         }
     }
 }

@@ -110,16 +110,25 @@ impl ClientType {
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
-            let client = match config.socks5() {
-                Some(socks5) => RawClient::new_proxy_ssl(
+            let client = match (config.socks5(), config.tofu_store()) {
+                (Some(socks5), _) => RawClient::new_proxy_ssl(
                     url.as_str(),
                     config.validate_domain(),
                     socks5,
                     config.timeout(),
                 )?,
-                None => {
-                    RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
-                }
+
+                (None, Some(tofu_store)) => RawClient::new_ssl_with_tofu(
+                    url.as_str(),
+                    tofu_store.clone(),
+                    config.timeout(),
+                )?,
+
+                (None, None) => RawClient::new_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    config.timeout(),
+                )?,
             };
 
             Ok(ClientType::SSL(client))
