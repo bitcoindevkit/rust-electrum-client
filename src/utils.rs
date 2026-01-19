@@ -13,7 +13,7 @@ use bitcoin::Txid;
 /// otherwise.
 ///
 /// [`transaction_get_merkle`]: crate::ElectrumApi::transaction_get_merkle
-/// [`BlockHeader`]: bitcoin::BlockHeader
+/// [`BlockHeader`]: bitcoin::block::Header
 pub fn validate_merkle_proof(
     txid: &Txid,
     merkle_root: &TxMerkleNode,
