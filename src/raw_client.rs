@@ -635,12 +635,23 @@ impl<S: Read + Write> RawClient<S> {
                 loop {
                     raw_resp.clear();
 
-                    if let Err(e) = reader.read_line(&mut raw_resp) {
-                        let error = Arc::new(e);
-                        for (_, s) in self.waiting_map.lock().unwrap().drain() {
-                            s.send(ChannelMessage::Error(error.clone()))?;
+                    match reader.read_line(&mut raw_resp) {
+                        Ok(n_bytes_read) => {
+                            if n_bytes_read == 0 {
+                                trace!("Reached UnexpectedEof");
+                                return Err(Error::IOError(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "unexpected EOF",
+                                )));
+                            }
                         }
-                        return Err(Error::SharedIOError(error));
+                        Err(e) => {
+                            let error = Arc::new(e);
+                            for (_, s) in self.waiting_map.lock().unwrap().drain() {
+                                s.send(ChannelMessage::Error(error.clone()))?;
+                            }
+                            return Err(Error::SharedIOError(error));
+                        }
                     }
                     trace!("<== {}", raw_resp);
 
