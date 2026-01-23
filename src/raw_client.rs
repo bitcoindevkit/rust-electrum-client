@@ -1202,16 +1202,18 @@ mod test {
 
     use crate::utils;
 
-    use super::RawClient;
+    use super::{ElectrumSslStream, RawClient};
     use crate::api::ElectrumApi;
 
-    fn get_test_server() -> String {
-        std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("electrum.blockstream.info:50001".into())
+    fn get_test_client() -> RawClient<ElectrumSslStream> {
+        let server =
+            std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("fortress.qtornado.com:443".into());
+        RawClient::new_ssl(&*server, false, None).unwrap()
     }
 
     #[test]
     fn test_server_features_simple() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.server_features().unwrap();
         assert_eq!(
@@ -1230,7 +1232,7 @@ mod test {
     fn test_batch_response_ordering() {
         // The electrum.blockstream.info:50001 node always sends back ordered responses which will make this always pass.
         // However, many servers do not, so we use one of those servers for this test.
-        let client = RawClient::new("exs.dyshek.org:50001", None).unwrap();
+        let client = get_test_client();
         let heights: Vec<u32> = vec![1, 4, 8, 12, 222, 6666, 12];
         let result_times = [
             1231469665, 1231470988, 1231472743, 1231474888, 1231770653, 1236456633, 1231474888,
@@ -1246,7 +1248,7 @@ mod test {
 
     #[test]
     fn test_relay_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.relay_fee().unwrap();
         assert!(resp > 0.0);
@@ -1254,7 +1256,7 @@ mod test {
 
     #[test]
     fn test_estimate_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.estimate_fee(10).unwrap();
         assert!(resp > 0.0);
@@ -1262,7 +1264,7 @@ mod test {
 
     #[test]
     fn test_block_header() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_header(0).unwrap();
         assert_eq!(resp.version, bitcoin::block::Version::ONE);
@@ -1272,7 +1274,7 @@ mod test {
 
     #[test]
     fn test_block_header_raw() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_header_raw(0).unwrap();
         assert_eq!(
@@ -1288,7 +1290,7 @@ mod test {
 
     #[test]
     fn test_block_headers() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_headers(0, 4).unwrap();
         assert_eq!(resp.count, 4);
@@ -1302,7 +1304,7 @@ mod test {
     fn test_script_get_balance() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
@@ -1319,7 +1321,7 @@ mod test {
 
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
@@ -1340,7 +1342,7 @@ mod test {
         use bitcoin::Txid;
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
@@ -1362,7 +1364,7 @@ mod test {
     fn test_batch_script_list_unspent() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
@@ -1379,7 +1381,7 @@ mod test {
 
     #[test]
     fn test_batch_estimate_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
         assert_eq!(resp.len(), 2);
@@ -1391,7 +1393,7 @@ mod test {
     fn test_transaction_get() {
         use bitcoin::{transaction, Txid};
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client
             .transaction_get(
@@ -1407,7 +1409,7 @@ mod test {
     fn test_transaction_get_raw() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client
             .transaction_get_raw(
@@ -1441,7 +1443,7 @@ mod test {
     fn test_transaction_get_merkle() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1493,7 +1495,7 @@ mod test {
             exp_bytes: [u8; 32],
         }
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let test_cases: Vec<TestCase> = vec![
             TestCase {
@@ -1578,7 +1580,7 @@ mod test {
     fn test_txid_from_pos() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1591,7 +1593,7 @@ mod test {
     fn test_txid_from_pos_with_merkle() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1609,13 +1611,13 @@ mod test {
 
     #[test]
     fn test_ping() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
         client.ping().unwrap();
     }
 
     #[test]
     fn test_block_headers_subscribe() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
         let resp = client.block_headers_subscribe().unwrap();
 
         assert!(resp.height >= 639000);
@@ -1625,7 +1627,7 @@ mod test {
     fn test_script_subscribe() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
@@ -1638,7 +1640,7 @@ mod test {
 
     #[test]
     fn test_request_after_error() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
         assert!(client.server_features().is_ok());
@@ -1648,7 +1650,7 @@ mod test {
     fn test_raw_call() {
         use crate::types::Param;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let params = vec![
             Param::String(

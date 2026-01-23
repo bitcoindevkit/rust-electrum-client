@@ -7,7 +7,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     env:
-      TEST_ELECTRUM_SERVER: electrum.blockstream.info:50001
+      TEST_ELECTRUM_SERVER: fortress.qtornado.com:443
     strategy:
       matrix:
         rust:
