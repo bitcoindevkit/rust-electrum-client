@@ -22,6 +22,7 @@ pub enum ClientType {
     #[allow(missing_docs)]
     TCP(RawClient<ElectrumPlaintextStream>),
     #[allow(missing_docs)]
+    #[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
     SSL(RawClient<ElectrumSslStream>),
     #[allow(missing_docs)]
     #[cfg(feature = "proxy")]
@@ -44,6 +45,7 @@ macro_rules! impl_inner_call {
             let read_client = $self.client_type.read().unwrap();
             let res = match &*read_client {
                 ClientType::TCP(inner) => inner.$name( $($args, )* ),
+                #[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
                 ClientType::SSL(inner) => inner.$name( $($args, )* ),
                 #[cfg(feature = "proxy")]
                 ClientType::Socks5(inner) => inner.$name( $($args, )* ),
@@ -110,6 +112,7 @@ impl ClientType {
     /// Constructor that supports multiple backends and allows configuration through
     /// the [Config]
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
+        #[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
             #[cfg(feature = "proxy")]
@@ -128,10 +131,18 @@ impl ClientType {
             let client =
                 RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
 
-            Ok(ClientType::SSL(client))
-        } else {
-            let url = url.replacen("tcp://", "", 1);
+            return Ok(ClientType::SSL(client));
+        }
 
+        #[cfg(not(any(feature = "openssl", feature = "rustls", feature = "rustls-ring")))]
+        if url.starts_with("ssl://") {
+            return Err(Error::Message(
+                "SSL connections require one of the following features to be enabled: openssl, rustls, or rustls-ring".to_string()
+            ));
+        }
+
+        {
+            let url = url.replacen("tcp://", "", 1);
             #[cfg(feature = "proxy")]
             let client = match config.socks5() {
                 Some(socks5) => ClientType::Socks5(RawClient::new_proxy(

@@ -46,7 +46,6 @@ pub mod socks;
 mod api;
 mod batch;
 
-#[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
 pub mod client;
 
 mod config;
@@ -58,7 +57,6 @@ pub mod utils;
 
 pub use api::ElectrumApi;
 pub use batch::Batch;
-#[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
 pub use client::*;
 pub use config::{Config, ConfigBuilder, Socks5Config};
 pub use types::*;
