@@ -45,6 +45,26 @@ use crate::api::ElectrumApi;
 use crate::batch::Batch;
 use crate::types::*;
 
+/// Client name sent to the server during protocol version negotiation.
+pub const CLIENT_NAME: &str = "";
+
+/// Minimum protocol version supported by this client.
+pub const PROTOCOL_VERSION_MIN: &str = "1.4";
+
+/// Maximum protocol version supported by this client.
+pub const PROTOCOL_VERSION_MAX: &str = "1.6";
+
+/// Checks if a protocol version string is at least the specified major.minor version.
+fn is_protocol_version_at_least(version: &str, major: u32, minor: u32) -> bool {
+    let mut parts = version.split('.');
+    let v_major = parts.next().and_then(|s| s.parse::<u32>().ok());
+    let v_minor = parts.next().and_then(|s| s.parse::<u32>().ok());
+    match (v_major, v_minor) {
+        (Some(v_major), Some(v_minor)) => v_major > major || (v_major == major && v_minor >= minor),
+        _ => false,
+    }
+}
+
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
         impl_batch_call!($self, $data, $call, )
@@ -142,6 +162,9 @@ where
     headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
 
+    /// The protocol version negotiated with the server via `server.version`.
+    protocol_version: Mutex<Option<String>>,
+
     #[cfg(feature = "debug-calls")]
     calls: AtomicUsize,
 }
@@ -163,6 +186,8 @@ where
             headers: Mutex::new(VecDeque::new()),
             script_notifications: Mutex::new(HashMap::new()),
 
+            protocol_version: Mutex::new(None),
+
             #[cfg(feature = "debug-calls")]
             calls: AtomicUsize::new(0),
         }
@@ -173,6 +198,9 @@ where
 pub type ElectrumPlaintextStream = TcpStream;
 impl RawClient<ElectrumPlaintextStream> {
     /// Creates a new plaintext client and tries to connect to `socket_addr`.
+    ///
+    /// Automatically negotiates the protocol version with the server using
+    /// `server.version` as required by the Electrum protocol.
     pub fn new<A: ToSocketAddrs>(
         socket_addrs: A,
         timeout: Option<Duration>,
@@ -187,7 +215,9 @@ impl RawClient<ElectrumPlaintextStream> {
             None => TcpStream::connect(socket_addrs)?,
         };
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -285,7 +315,9 @@ impl RawClient<ElectrumSslStream> {
             .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -466,7 +498,9 @@ impl RawClient<ElectrumSslStream> {
         .map_err(Error::CouldNotCreateConnection)?;
         let stream = StreamOwned::new(session, tcp_stream);
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 }
 
@@ -496,7 +530,9 @@ impl RawClient<ElectrumProxyStream> {
         stream.get_mut().set_read_timeout(timeout)?;
         stream.get_mut().set_write_timeout(timeout)?;
 
-        Ok(stream.into())
+        let client: Self = stream.into();
+        client.negotiate_protocol_version()?;
+        Ok(client)
     }
 
     #[cfg(any(
@@ -551,6 +587,30 @@ impl<S: Read + Write> RawClient<S> {
     //     self._reader_thread(None).map(|_| ())
     // }
 
+    /// Negotiates the protocol version with the server.
+    ///
+    /// This sends `server.version` as the first message and stores the negotiated
+    /// protocol version. Called automatically by constructors.
+    fn negotiate_protocol_version(&self) -> Result<(), Error> {
+        let version_range = vec![
+            PROTOCOL_VERSION_MIN.to_string(),
+            PROTOCOL_VERSION_MAX.to_string(),
+        ];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "server.version",
+            vec![
+                Param::String(CLIENT_NAME.to_string()),
+                Param::StringVec(version_range),
+            ],
+        );
+        let result = self.call(req)?;
+        let response: ServerVersionRes = serde_json::from_value(result)?;
+
+        *self.protocol_version.lock()? = Some(response.protocol_version);
+        Ok(())
+    }
+
     fn _reader_thread(&self, until_message: Option<usize>) -> Result<serde_json::Value, Error> {
         let mut raw_resp = String::new();
         let resp = match self.buf_reader.try_lock() {
@@ -575,12 +635,23 @@ impl<S: Read + Write> RawClient<S> {
                 loop {
                     raw_resp.clear();
 
-                    if let Err(e) = reader.read_line(&mut raw_resp) {
-                        let error = Arc::new(e);
-                        for (_, s) in self.waiting_map.lock().unwrap().drain() {
-                            s.send(ChannelMessage::Error(error.clone()))?;
+                    match reader.read_line(&mut raw_resp) {
+                        Ok(n_bytes_read) => {
+                            if n_bytes_read == 0 {
+                                trace!("Reached UnexpectedEof");
+                                return Err(Error::IOError(std::io::Error::new(
+                                    std::io::ErrorKind::UnexpectedEof,
+                                    "unexpected EOF",
+                                )));
+                            }
                         }
-                        return Err(Error::SharedIOError(error));
+                        Err(e) => {
+                            let error = Arc::new(e);
+                            for (_, s) in self.waiting_map.lock().unwrap().drain() {
+                                s.send(ChannelMessage::Error(error.clone()))?;
+                            }
+                            return Err(Error::SharedIOError(error));
+                        }
                     }
                     trace!("<== {}", raw_resp);
 
@@ -877,23 +948,50 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         );
         let result = self.call(req)?;
 
-        let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
-        for i in 0..deserialized.count {
-            let (start, end) = (i * 80, (i + 1) * 80);
-            deserialized
-                .headers
-                .push(deserialize(&deserialized.raw_headers[start..end])?);
-        }
-        deserialized.raw_headers.clear();
+        // Check protocol version to determine response format
+        let is_v1_6_or_later = {
+            let protocol_version = self.protocol_version.lock()?;
+            protocol_version
+                .as_ref()
+                .map(|v| is_protocol_version_at_least(v, 1, 6))
+                .unwrap_or(false)
+        };
 
-        Ok(deserialized)
+        if is_v1_6_or_later {
+            // v1.6+: headers field contains array of hex strings
+            let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
+            for header_hex in &deserialized.header_hexes {
+                let header_bytes = Vec::<u8>::from_hex(header_hex)?;
+                deserialized.headers.push(deserialize(&header_bytes)?);
+            }
+            deserialized.header_hexes.clear();
+            Ok(deserialized)
+        } else {
+            // v1.4: hex field contains concatenated headers
+            let deserialized: GetHeadersResLegacy = serde_json::from_value(result)?;
+            let mut headers = Vec::new();
+            for i in 0..deserialized.count {
+                let (start, end) = (i * 80, (i + 1) * 80);
+                headers.push(deserialize(&deserialized.raw_headers[start..end])?);
+            }
+            Ok(GetHeadersRes {
+                max: deserialized.max,
+                count: deserialized.count,
+                header_hexes: Vec::new(),
+                headers,
+            })
+        }
     }
 
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
+        let mut params = vec![Param::Usize(number)];
+        if let Some(mode) = mode {
+            params.push(Param::String(mode.to_string()));
+        }
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.estimatefee",
-            vec![Param::Usize(number)],
+            params,
         );
         let result = self.call(req)?;
 
@@ -1098,7 +1196,19 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         I: IntoIterator + Clone,
         I::Item: Borrow<usize>,
     {
-        impl_batch_call!(self, numbers, estimate_fee, apply_deref)
+        let mut batch = Batch::default();
+        for i in numbers {
+            batch.estimate_fee(*i.borrow(), None);
+        }
+
+        let resp = self.batch_call(&batch)?;
+        let mut answer = Vec::new();
+
+        for x in resp {
+            answer.push(serde_json::from_value(x)?);
+        }
+
+        Ok(answer)
     }
 
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error> {
@@ -1106,6 +1216,25 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.broadcast",
+            params,
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
+    fn transaction_broadcast_package_raw<Tx: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[Tx],
+    ) -> Result<BroadcastPackageRes, Error> {
+        let hex_txs: Vec<String> = raw_txs
+            .iter()
+            .map(|tx| tx.as_ref().to_lower_hex_string())
+            .collect();
+        let params = vec![Param::StringVec(hex_txs)];
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "blockchain.transaction.broadcast_package",
             params,
         );
         let result = self.call(req)?;
@@ -1179,6 +1308,17 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
+        let req = Request::new_id(
+            self.last_id.fetch_add(1, Ordering::SeqCst),
+            "mempool.get_info",
+            vec![],
+        );
+        let result = self.call(req)?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn ping(&self) -> Result<(), Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -1202,16 +1342,18 @@ mod test {
 
     use crate::utils;
 
-    use super::RawClient;
+    use super::{ElectrumSslStream, RawClient};
     use crate::api::ElectrumApi;
 
-    fn get_test_server() -> String {
-        std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("electrum.blockstream.info:50001".into())
+    fn get_test_client() -> RawClient<ElectrumSslStream> {
+        let server =
+            std::env::var("TEST_ELECTRUM_SERVER").unwrap_or("fortress.qtornado.com:443".into());
+        RawClient::new_ssl(&*server, false, None).unwrap()
     }
 
     #[test]
     fn test_server_features_simple() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.server_features().unwrap();
         assert_eq!(
@@ -1226,11 +1368,31 @@ mod test {
     }
 
     #[test]
+    fn test_mempool_get_info() {
+        let client = get_test_client();
+
+        let resp = client.mempool_get_info().unwrap();
+        assert!(resp.mempoolminfee >= 0.0);
+        assert!(resp.minrelaytxfee >= 0.0);
+        assert!(resp.incrementalrelayfee >= 0.0);
+    }
+
+    #[test]
+    fn test_transaction_broadcast_package() {
+        let client = get_test_client();
+
+        // Empty package should return an error or unsuccessful response
+        let resp = client.transaction_broadcast_package_raw::<Vec<u8>>(&[]);
+        // The server may reject an empty package with a protocol error
+        assert!(resp.is_err() || !resp.unwrap().success);
+    }
+
+    #[test]
     #[ignore = "depends on a live server"]
     fn test_batch_response_ordering() {
         // The electrum.blockstream.info:50001 node always sends back ordered responses which will make this always pass.
         // However, many servers do not, so we use one of those servers for this test.
-        let client = RawClient::new("exs.dyshek.org:50001", None).unwrap();
+        let client = get_test_client();
         let heights: Vec<u32> = vec![1, 4, 8, 12, 222, 6666, 12];
         let result_times = [
             1231469665, 1231470988, 1231472743, 1231474888, 1231770653, 1236456633, 1231474888,
@@ -1245,24 +1407,16 @@ mod test {
     }
 
     #[test]
-    fn test_relay_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
-
-        let resp = client.relay_fee().unwrap();
-        assert!(resp > 0.0);
-    }
-
-    #[test]
     fn test_estimate_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
-        let resp = client.estimate_fee(10).unwrap();
+        let resp = client.estimate_fee(10, None).unwrap();
         assert!(resp > 0.0);
     }
 
     #[test]
     fn test_block_header() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_header(0).unwrap();
         assert_eq!(resp.version, bitcoin::block::Version::ONE);
@@ -1272,7 +1426,7 @@ mod test {
 
     #[test]
     fn test_block_header_raw() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_header_raw(0).unwrap();
         assert_eq!(
@@ -1288,7 +1442,7 @@ mod test {
 
     #[test]
     fn test_block_headers() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.block_headers(0, 4).unwrap();
         assert_eq!(resp.count, 4);
@@ -1302,7 +1456,7 @@ mod test {
     fn test_script_get_balance() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Realistically nobody will ever spend from this address, so we can expect the balance to
         // increase over time
@@ -1319,7 +1473,7 @@ mod test {
 
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
@@ -1340,7 +1494,7 @@ mod test {
         use bitcoin::Txid;
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
@@ -1362,7 +1516,7 @@ mod test {
     fn test_batch_script_list_unspent() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
         let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
@@ -1379,7 +1533,7 @@ mod test {
 
     #[test]
     fn test_batch_estimate_fee() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client.batch_estimate_fee(vec![10, 20]).unwrap();
         assert_eq!(resp.len(), 2);
@@ -1391,7 +1545,7 @@ mod test {
     fn test_transaction_get() {
         use bitcoin::{transaction, Txid};
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client
             .transaction_get(
@@ -1407,7 +1561,7 @@ mod test {
     fn test_transaction_get_raw() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let resp = client
             .transaction_get_raw(
@@ -1441,7 +1595,7 @@ mod test {
     fn test_transaction_get_merkle() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1493,7 +1647,7 @@ mod test {
             exp_bytes: [u8; 32],
         }
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let test_cases: Vec<TestCase> = vec![
             TestCase {
@@ -1578,7 +1732,7 @@ mod test {
     fn test_txid_from_pos() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1591,7 +1745,7 @@ mod test {
     fn test_txid_from_pos_with_merkle() {
         use bitcoin::Txid;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let txid =
             Txid::from_str("1f7ff3c407f33eabc8bec7d2cc230948f2249ec8e591bcf6f971ca9366c8788d")
@@ -1609,13 +1763,13 @@ mod test {
 
     #[test]
     fn test_ping() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
         client.ping().unwrap();
     }
 
     #[test]
     fn test_block_headers_subscribe() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
         let resp = client.block_headers_subscribe().unwrap();
 
         assert!(resp.height >= 639000);
@@ -1625,7 +1779,7 @@ mod test {
     fn test_script_subscribe() {
         use std::str::FromStr;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         // Mt.Gox hack address
         let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
@@ -1638,7 +1792,7 @@ mod test {
 
     #[test]
     fn test_request_after_error() {
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         assert!(client.transaction_broadcast_raw(&[0x00]).is_err());
         assert!(client.server_features().is_ok());
@@ -1648,7 +1802,7 @@ mod test {
     fn test_raw_call() {
         use crate::types::Param;
 
-        let client = RawClient::new(get_test_server(), None).unwrap();
+        let client = get_test_client();
 
         let params = vec![
             Param::String(

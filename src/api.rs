@@ -42,8 +42,8 @@ where
         (**self).block_headers(start_height, count)
     }
 
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error> {
-        (**self).estimate_fee(number)
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error> {
+        (**self).estimate_fee(number, mode)
     }
 
     fn relay_fee(&self) -> Result<f64, Error> {
@@ -141,6 +141,13 @@ where
         (**self).transaction_broadcast_raw(raw_tx)
     }
 
+    fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<BroadcastPackageRes, Error> {
+        (**self).transaction_broadcast_package_raw(raw_txs)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         (**self).transaction_get_merkle(txid, height)
     }
@@ -170,6 +177,10 @@ where
 
     fn server_features(&self) -> Result<ServerFeaturesRes, Error> {
         (**self).server_features()
+    }
+
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
+        (**self).mempool_get_info()
     }
 
     fn ping(&self) -> Result<(), Error> {
@@ -241,6 +252,21 @@ pub trait ElectrumApi {
         self.transaction_broadcast_raw(&buffer)
     }
 
+    /// Broadcasts a package of transactions to the network.
+    ///
+    /// The package must consist of a child with its parents, where none of the parents
+    /// depend on one another. The package must be topologically sorted, with the child
+    /// being the last element in the array.
+    ///
+    /// This method was added in protocol v1.6 for package relay support.
+    fn transaction_broadcast_package(
+        &self,
+        txs: &[Transaction],
+    ) -> Result<BroadcastPackageRes, Error> {
+        let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
+        self.transaction_broadcast_package_raw(&raw_txs)
+    }
+
     /// Executes the requested API call returning the raw answer.
     fn raw_call(
         &self,
@@ -268,9 +294,16 @@ pub trait ElectrumApi {
     fn block_headers(&self, start_height: usize, count: usize) -> Result<GetHeadersRes, Error>;
 
     /// Estimates the fee required in **Bitcoin per kilobyte** to confirm a transaction in `number` blocks.
-    fn estimate_fee(&self, number: usize) -> Result<f64, Error>;
+    ///
+    /// Optionally takes an [`EstimationMode`] parameter to specify the fee estimation mode.
+    /// This parameter was added in protocol v1.6.
+    fn estimate_fee(&self, number: usize, mode: Option<EstimationMode>) -> Result<f64, Error>;
 
     /// Returns the minimum accepted fee by the server's node in **Bitcoin, not Satoshi**.
+    ///
+    /// **Note:** This method was removed in protocol v1.6+. Use
+    /// [`mempool_get_info`](#method.mempool_get_info) instead, which provides `minrelaytxfee`
+    /// along with additional mempool fee information.
     fn relay_fee(&self) -> Result<f64, Error>;
 
     /// Subscribes to notifications for activity on a specific *scriptPubKey*.
@@ -370,6 +403,18 @@ pub trait ElectrumApi {
     /// Broadcasts the raw bytes of a transaction to the network.
     fn transaction_broadcast_raw(&self, raw_tx: &[u8]) -> Result<Txid, Error>;
 
+    /// Broadcasts a package of raw transactions to the network.
+    ///
+    /// The package must consist of a child with its parents, where none of the parents
+    /// depend on one another. The package must be topologically sorted, with the child
+    /// being the last element in the array.
+    ///
+    /// This method was added in protocol v1.6 for package relay support.
+    fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<BroadcastPackageRes, Error>;
+
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
 
@@ -397,6 +442,12 @@ pub trait ElectrumApi {
 
     /// Returns the capabilities of the server.
     fn server_features(&self) -> Result<ServerFeaturesRes, Error>;
+
+    /// Returns information about the current state of the mempool.
+    ///
+    /// This method was added in protocol v1.6 and replaces `relay_fee` by providing
+    /// `minrelaytxfee` along with additional mempool fee information.
+    fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error>;
 
     /// Pings the server. This method can also be used as a "dummy" call to trigger the processing
     /// of incoming block header or script notifications.
@@ -449,7 +500,11 @@ mod test {
             unreachable!()
         }
 
-        fn estimate_fee(&self, _: usize) -> Result<f64, super::Error> {
+        fn estimate_fee(
+            &self,
+            _: usize,
+            _: Option<super::EstimationMode>,
+        ) -> Result<f64, super::Error> {
             unreachable!()
         }
 
@@ -572,6 +627,13 @@ mod test {
             unreachable!()
         }
 
+        fn transaction_broadcast_package_raw<T: AsRef<[u8]>>(
+            &self,
+            _: &[T],
+        ) -> Result<super::BroadcastPackageRes, super::Error> {
+            unreachable!()
+        }
+
         fn transaction_get_merkle(
             &self,
             _: &bitcoin::Txid,
@@ -604,6 +666,10 @@ mod test {
         }
 
         fn server_features(&self) -> Result<super::ServerFeaturesRes, super::Error> {
+            unreachable!()
+        }
+
+        fn mempool_get_info(&self) -> Result<super::MempoolInfoRes, super::Error> {
             unreachable!()
         }
 

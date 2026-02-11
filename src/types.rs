@@ -33,6 +33,31 @@ pub enum Param {
     Bool(bool),
     /// Bytes array parameter
     Bytes(Vec<u8>),
+    /// String array parameter
+    StringVec(Vec<String>),
+}
+
+/// Fee estimation mode for [`estimate_fee`](../api/trait.ElectrumApi.html#method.estimate_fee).
+///
+/// This parameter was added in protocol v1.6 and is passed to bitcoind's
+/// `estimatesmartfee` RPC as the `estimate_mode` parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstimationMode {
+    /// A conservative estimate potentially returns a higher feerate and is more likely to be
+    /// sufficient for the desired target, but is not as responsive to short term drops in the
+    /// prevailing fee market.
+    Conservative,
+    /// Economical fee estimate - potentially lower fees but may take longer to confirm.
+    Economical,
+}
+
+impl Display for EstimationMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            EstimationMode::Conservative => write!(f, "CONSERVATIVE"),
+            EstimationMode::Economical => write!(f, "ECONOMICAL"),
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -202,17 +227,68 @@ pub struct ServerFeaturesRes {
     pub pruning: Option<i64>,
 }
 
-/// Response to a [`server_features`](../client/struct.Client.html#method.server_features) request.
+/// Response to a [`server_version`](../client/struct.Client.html#method.server_version) request.
+///
+/// This is returned as an array of two strings: `[server_software_version, protocol_version]`.
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(from = "(String, String)")]
+pub struct ServerVersionRes {
+    /// Server software version string (e.g., "ElectrumX 1.18.0").
+    pub server_software_version: String,
+    /// Negotiated protocol version (e.g., "1.6").
+    pub protocol_version: String,
+}
+
+impl From<(String, String)> for ServerVersionRes {
+    fn from((server_software_version, protocol_version): (String, String)) -> Self {
+        Self {
+            server_software_version,
+            protocol_version,
+        }
+    }
+}
+
+/// Response to a [`mempool_get_info`](../client/struct.Client.html#method.mempool_get_info) request.
+///
+/// Contains information about the current state of the mempool.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolInfoRes {
+    /// Dynamic minimum fee rate in BTC/kvB for tx to be accepted given current conditions.
+    /// The maximum of `minrelaytxfee` and minimum mempool fee.
+    pub mempoolminfee: f64,
+    /// Static operator-configurable minimum relay fee for transactions, in BTC/kvB.
+    pub minrelaytxfee: f64,
+    /// Static operator-configurable minimum fee rate increment for mempool limiting or
+    /// replacement, in BTC/kvB.
+    pub incrementalrelayfee: f64,
+}
+
+/// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request (protocol v1.4, legacy format).
+///
+/// In protocol v1.4, the headers are returned as a single concatenated hex string.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GetHeadersResLegacy {
+    /// Maximum number of headers returned in a single response.
+    pub max: usize,
+    /// Number of headers in this response.
+    pub count: usize,
+    /// Raw headers concatenated.
+    #[serde(rename(deserialize = "hex"), deserialize_with = "from_hex")]
+    pub raw_headers: Vec<u8>,
+}
+
+/// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request.
 #[derive(Clone, Debug, Deserialize)]
 pub struct GetHeadersRes {
     /// Maximum number of headers returned in a single response.
     pub max: usize,
     /// Number of headers in this response.
     pub count: usize,
-    /// Raw headers concatenated. Normally cleared before returning.
-    #[serde(rename(deserialize = "hex"), deserialize_with = "from_hex")]
-    pub raw_headers: Vec<u8>,
-    /// Array of block headers.
+    /// Array of header hex strings (v1.6 format).
+    #[serde(default, rename(deserialize = "headers"))]
+    pub(crate) header_hexes: Vec<String>,
+    /// Array of block headers (populated after parsing).
     #[serde(skip)]
     pub headers: Vec<block::Header>,
 }
@@ -249,6 +325,29 @@ pub struct TxidFromPosRes {
     /// The merkle path of the transaction.
     #[serde(deserialize_with = "from_hex_array")]
     pub merkle: Vec<[u8; 32]>,
+}
+
+/// Error details for a transaction that failed to broadcast in a package.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BroadcastPackageError {
+    /// The txid of the transaction that failed.
+    pub txid: Txid,
+    /// The error message describing why the transaction was rejected.
+    pub error: String,
+}
+
+/// Response to a [`transaction_broadcast_package`](../client/struct.Client.html#method.transaction_broadcast_package)
+/// request.
+///
+/// This method was added in protocol v1.6 for package relay support.
+#[derive(Clone, Debug, Deserialize)]
+pub struct BroadcastPackageRes {
+    /// Whether the package was successfully accepted by the mempool.
+    pub success: bool,
+    /// List of errors for transactions that were rejected.
+    /// Only present if some transactions failed.
+    #[serde(default)]
+    pub errors: Vec<BroadcastPackageError>,
 }
 
 /// Notification of a new block header

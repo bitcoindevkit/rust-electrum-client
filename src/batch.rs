@@ -4,7 +4,7 @@
 
 use bitcoin::{Script, Txid};
 
-use crate::types::{Call, Param, ToElectrumScriptHash};
+use crate::types::{Call, EstimationMode, Param, ToElectrumScriptHash};
 
 /// Helper structure that caches all the requests before they are actually sent to the server.
 ///
@@ -74,8 +74,11 @@ impl Batch {
     }
 
     /// Add one `blockchain.estimatefee` request to the batch queue
-    pub fn estimate_fee(&mut self, number: usize) {
-        let params = vec![Param::Usize(number)];
+    pub fn estimate_fee(&mut self, number: usize, mode: Option<EstimationMode>) {
+        let mut params = vec![Param::Usize(number)];
+        if let Some(mode) = mode {
+            params.push(Param::String(mode.to_string()));
+        }
         self.calls
             .push((String::from("blockchain.estimatefee"), params));
     }
