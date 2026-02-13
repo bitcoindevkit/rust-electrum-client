@@ -19,24 +19,18 @@ use bitcoin::consensus::encode::deserialize;
 use bitcoin::hex::{DisplayHex, FromHex};
 use bitcoin::{Script, Txid};
 
-#[cfg(feature = "use-openssl")]
+#[cfg(feature = "openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
 
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
+#[allow(unused_imports)]
 use rustls::{
     pki_types::ServerName,
     pki_types::{Der, TrustAnchor},
     ClientConfig, ClientConnection, RootCertStore, StreamOwned,
 };
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
 
 use crate::stream::ClonableStream;
@@ -113,7 +107,7 @@ impl ToSocketAddrsDomain for (&str, u16) {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 impl ToSocketAddrsDomain for TargetAddr {
     fn domain(&self) -> Option<&str> {
         match self {
@@ -165,7 +159,6 @@ where
     /// The protocol version negotiated with the server via `server.version`.
     protocol_version: Mutex<Option<String>>,
 
-    #[cfg(feature = "debug-calls")]
     calls: AtomicUsize,
 }
 
@@ -188,7 +181,6 @@ where
 
             protocol_version: Mutex::new(None),
 
-            #[cfg(feature = "debug-calls")]
             calls: AtomicUsize::new(0),
         }
     }
@@ -258,10 +250,10 @@ fn connect_with_total_timeout<A: ToSocketAddrs>(
     Err(Error::AllAttemptsErrored(errors))
 }
 
-#[cfg(feature = "use-openssl")]
+#[cfg(feature = "openssl")]
 /// Transport type used to establish an OpenSSL TLS encrypted/authenticated connection with the server
 pub type ElectrumSslStream = SslStream<TcpStream>;
-#[cfg(feature = "use-openssl")]
+#[cfg(feature = "openssl")]
 impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
@@ -321,14 +313,8 @@ impl RawClient<ElectrumSslStream> {
     }
 }
 
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
+#[allow(unused)]
 mod danger {
     use crate::raw_client::ServerName;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified};
@@ -382,22 +368,14 @@ mod danger {
 }
 
 #[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
+    any(feature = "rustls", feature = "rustls-ring"),
+    not(feature = "openssl")
 ))]
 /// Transport type used to establish a Rustls TLS encrypted/authenticated connection with the server
 pub type ElectrumSslStream = StreamOwned<ClientConnection, TcpStream>;
 #[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
+    any(feature = "rustls", feature = "rustls-ring"),
+    not(feature = "openssl")
 ))]
 impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
@@ -440,7 +418,7 @@ impl RawClient<ElectrumSslStream> {
 
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             // We install a crypto provider depending on the set feature.
-            #[cfg(all(feature = "use-rustls", not(feature = "use-rustls-ring")))]
+            #[cfg(all(feature = "rustls", not(feature = "rustls-ring")))]
             rustls::crypto::CryptoProvider::install_default(
                 rustls::crypto::aws_lc_rs::default_provider(),
             )
@@ -450,7 +428,7 @@ impl RawClient<ElectrumSslStream> {
                 ))
             })?;
 
-            #[cfg(feature = "use-rustls-ring")]
+            #[cfg(feature = "rustls-ring")]
             rustls::crypto::CryptoProvider::install_default(
                 rustls::crypto::ring::default_provider(),
             )
@@ -481,9 +459,9 @@ impl RawClient<ElectrumSslStream> {
             builder
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
-                    #[cfg(all(feature = "use-rustls", not(feature = "use-rustls-ring")))]
+                    #[cfg(all(feature = "rustls", not(feature = "rustls-ring")))]
                     danger::NoCertificateVerification::new(rustls::crypto::aws_lc_rs::default_provider()),
-                    #[cfg(feature = "use-rustls-ring")]
+                    #[cfg(feature = "rustls-ring")]
                     danger::NoCertificateVerification::new(rustls::crypto::ring::default_provider()),
                 ))
                 .with_no_client_auth()
@@ -504,10 +482,10 @@ impl RawClient<ElectrumSslStream> {
     }
 }
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 /// Transport type used to establish a connection to a server through a socks proxy
 pub type ElectrumProxyStream = Socks5Stream;
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 impl RawClient<ElectrumProxyStream> {
     /// Creates a new socks client and tries to connect to `target_addr` using `proxy_addr` as a
     /// socks proxy server. The DNS resolution of `target_addr`, if required, is done
@@ -535,10 +513,9 @@ impl RawClient<ElectrumProxyStream> {
         Ok(client)
     }
 
-    #[cfg(any(
-        feature = "use-openssl",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
+    #[cfg(all(
+        any(feature = "openssl", feature = "rustls", feature = "rustls-ring",),
+        feature = "proxy",
     ))]
     /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
     /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
@@ -833,14 +810,9 @@ impl<S: Read + Write> RawClient<S> {
     }
 
     #[inline]
-    #[cfg(feature = "debug-calls")]
     fn increment_calls(&self) {
         self.calls.fetch_add(1, Ordering::SeqCst);
     }
-
-    #[inline]
-    #[cfg(not(feature = "debug-calls"))]
-    fn increment_calls(&self) {}
 }
 
 impl<T: Read + Write> ElectrumApi for RawClient<T> {
@@ -1330,7 +1302,6 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(())
     }
 
-    #[cfg(feature = "debug-calls")]
     fn calls_made(&self) -> Result<usize, Error> {
         Ok(self.calls.load(Ordering::SeqCst))
     }

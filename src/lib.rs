@@ -7,7 +7,7 @@
 //! plaintext connections over a socks proxy, useful for Onion servers. Using different features,
 //! the SSL implementation can be removed or replaced with [`openssl`](https://docs.rs/openssl).
 //!
-//! A `minimal` configuration is also provided, which only includes the plaintext TCP client.
+//! For a minimal configuration the library can be built with `--no-default-features`, which only includes the plaintext TCP client.
 //!
 //! # Example
 //!
@@ -22,46 +22,30 @@
 pub extern crate bitcoin;
 extern crate core;
 extern crate log;
-#[cfg(feature = "use-openssl")]
+#[cfg(feature = "openssl")]
 extern crate openssl;
-#[cfg(all(
-    any(
-        feature = "default",
-        feature = "use-rustls",
-        feature = "use-rustls-ring"
-    ),
-    not(feature = "use-openssl")
-))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
 extern crate rustls;
 extern crate serde;
 extern crate serde_json;
 
-#[cfg(any(
-    feature = "default",
-    feature = "use-rustls",
-    feature = "use-rustls-ring"
-))]
+#[cfg(any(feature = "rustls", feature = "rustls-ring"))]
 extern crate webpki_roots;
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 extern crate byteorder;
 
-#[cfg(all(unix, any(feature = "default", feature = "proxy")))]
+#[cfg(all(unix, feature = "proxy"))]
 extern crate libc;
-#[cfg(all(windows, any(feature = "default", feature = "proxy")))]
+#[cfg(all(windows, feature = "proxy"))]
 extern crate winapi;
 
-#[cfg(any(feature = "default", feature = "proxy"))]
+#[cfg(feature = "proxy")]
 pub mod socks;
 
 mod api;
 mod batch;
 
-#[cfg(any(
-    all(feature = "proxy", feature = "use-openssl"),
-    all(feature = "proxy", feature = "use-rustls"),
-    all(feature = "proxy", feature = "use-rustls-ring")
-))]
 pub mod client;
 
 mod config;
@@ -73,11 +57,6 @@ pub mod utils;
 
 pub use api::ElectrumApi;
 pub use batch::Batch;
-#[cfg(any(
-    all(feature = "proxy", feature = "use-openssl"),
-    all(feature = "proxy", feature = "use-rustls"),
-    all(feature = "proxy", feature = "use-rustls-ring")
-))]
 pub use client::*;
 pub use config::{Config, ConfigBuilder, Socks5Config};
 pub use types::*;

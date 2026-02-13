@@ -14,12 +14,22 @@ build:
 # Check code: formatting, compilation, linting, doc comments, and commit signature
 check:
    cargo +nightly fmt --all -- --check
-   cargo check --all-features --all-targets
+   @just _check-features
    cargo clippy --all-features --all-targets -- -D warnings
-   RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+   cargo rustdoc --all-features -- -D warnings
    @[ "$(git log --pretty='format:%G?' -1 HEAD)" = "N" ] && \
        echo "\n⚠️  Unsigned commit: BDK requires that commits be signed." || \
        true
+
+# Check feature configurations (matches CI)
+_check-features:
+   cargo check --features "default"
+   cargo check --no-default-features
+   cargo check --no-default-features --features "proxy"
+   cargo check --no-default-features --features "openssl"
+   cargo check --no-default-features --features "rustls"
+   cargo check --no-default-features --features "rustls-ring"
+   cargo check --no-default-features --features "proxy,openssl,rustls,rustls-ring"   
 
 # Format all code
 fmt:
