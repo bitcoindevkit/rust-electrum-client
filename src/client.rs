@@ -1,5 +1,6 @@
 //! Electrum Client
 
+use std::sync::Arc;
 use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
@@ -10,6 +11,7 @@ use crate::api::ElectrumApi;
 use crate::batch::Batch;
 use crate::config::Config;
 use crate::raw_client::*;
+use crate::tofu::TofuStore;
 use crate::types::*;
 use std::convert::TryFrom;
 
@@ -35,6 +37,7 @@ pub struct Client {
     client_type: RwLock<ClientType>,
     config: Config,
     url: String,
+    tofu_store: Option<Arc<dyn TofuStore>>,
 }
 
 macro_rules! impl_inner_call {
@@ -74,7 +77,7 @@ macro_rules! impl_inner_call {
                     if let Ok(mut write_client) = $self.client_type.try_write() {
                         loop {
                             std::thread::sleep(std::time::Duration::from_secs((1 << errors.len()).min(30) as u64));
-                            match ClientType::from_config(&$self.url, &$self.config) {
+                            match ClientType::from_config(&$self.url, &$self.config, $self.tofu_store.clone()) {
                                 Ok(new_client) => {
                                     info!("Succesfully created new client");
                                     *write_client = new_client;
@@ -111,7 +114,11 @@ fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
 impl ClientType {
     /// Constructor that supports multiple backends and allows configuration through
     /// the [Config]
-    pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
+    pub fn from_config(
+        url: &str,
+        config: &Config,
+        tofu_store: Option<Arc<dyn TofuStore>>,
+    ) -> Result<Self, Error> {
         #[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
@@ -122,14 +129,22 @@ impl ClientType {
                     config.validate_domain(),
                     socks5,
                     config.timeout(),
+                    tofu_store,
                 )?,
-                None => {
-                    RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?
-                }
+                None => RawClient::new_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    config.timeout(),
+                    tofu_store,
+                )?,
             };
             #[cfg(not(feature = "proxy"))]
-            let client =
-                RawClient::new_ssl(url.as_str(), config.validate_domain(), config.timeout())?;
+            let client = RawClient::new_ssl(
+                url.as_str(),
+                config.validate_domain(),
+                config.timeout(),
+                tofu_store,
+            )?;
 
             return Ok(ClientType::SSL(client));
         }
@@ -142,6 +157,12 @@ impl ClientType {
         }
 
         {
+            if tofu_store.is_some() {
+                return Err(Error::Message(
+                    "TOFU validation is available only for SSL connections".to_string(),
+                ));
+            }
+
             let url = url.replacen("tcp://", "", 1);
             #[cfg(feature = "proxy")]
             let client = match config.socks5() {
@@ -178,12 +199,34 @@ impl Client {
     /// Generic constructor that supports multiple backends and allows configuration through
     /// the [Config]
     pub fn from_config(url: &str, config: Config) -> Result<Self, Error> {
-        let client_type = RwLock::new(ClientType::from_config(url, &config)?);
+        let client_type = RwLock::new(ClientType::from_config(url, &config, None)?);
 
         Ok(Client {
             client_type,
             config,
             url: url.to_string(),
+            tofu_store: None,
+        })
+    }
+
+    /// Creates a new client with TOFU (Trust On First Use) certificate validation.
+    /// This constructor creates a SSL client that uses TOFU for certificate validation.
+    pub fn from_config_with_tofu(
+        url: &str,
+        config: Config,
+        tofu_store: Arc<dyn TofuStore>,
+    ) -> Result<Self, Error> {
+        let client_type = RwLock::new(ClientType::from_config(
+            url,
+            &config,
+            Some(tofu_store.clone()),
+        )?);
+
+        Ok(Client {
+            client_type,
+            config,
+            url: url.to_string(),
+            tofu_store: Some(tofu_store),
         })
     }
 }

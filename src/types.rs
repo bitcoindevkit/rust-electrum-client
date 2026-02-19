@@ -419,6 +419,10 @@ pub enum Error {
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads
     SharedIOError(Arc<std::io::Error>),
+    /// Certificate presented by server changed vs saved TOFU value
+    TlsCertificateChanged(String),
+    /// Could not persist TOFU store
+    TofuPersistError(String),
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
@@ -475,6 +479,8 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            Error::TlsCertificateChanged(domain) => write!(f, "TLS certificate changed for host: {}", domain),
+            Error::TofuPersistError(msg) => write!(f, "TOFU persistence error: {}", msg),
         }
     }
 }
