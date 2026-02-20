@@ -71,6 +71,9 @@ pub struct Request<'a> {
     pub method: &'a str,
     /// The request parameters
     pub params: Vec<Param>,
+    /// Optional authorization token (e.g., JWT Bearer token)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<String>,
 }
 
 impl<'a> Request<'a> {
@@ -81,6 +84,7 @@ impl<'a> Request<'a> {
             jsonrpc: JSONRPC_2_0,
             method,
             params,
+            authorization: None,
         }
     }
 
@@ -518,11 +522,77 @@ impl From<std::sync::mpsc::RecvError> for Error {
 mod tests {
     use crate::ScriptStatus;
 
+    use super::{Param, Request};
+
     #[test]
     fn script_status_roundtrip() {
         let script_status: ScriptStatus = [1u8; 32].into();
         let script_status_json = serde_json::to_string(&script_status).unwrap();
         let script_status_back = serde_json::from_str(&script_status_json).unwrap();
         assert_eq!(script_status, script_status_back);
+    }
+
+    #[test]
+    fn test_request_serialization_without_authorization() {
+        let req = Request::new_id(1, "server.version", vec![]);
+
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // Authorization field should not be present when None
+        assert!(parsed.get("authorization").is_none());
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], "server.version");
+        assert_eq!(parsed["id"], 1);
+    }
+
+    #[test]
+    fn test_request_serialization_with_authorization() {
+        let mut req = Request::new_id(1, "server.version", vec![]);
+        req.authorization = Some("Bearer test-jwt-token".to_string());
+
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // Authorization field should be present
+        assert_eq!(
+            parsed["authorization"],
+            serde_json::Value::String("Bearer test-jwt-token".to_string())
+        );
+        assert_eq!(parsed["jsonrpc"], "2.0");
+        assert_eq!(parsed["method"], "server.version");
+        assert_eq!(parsed["id"], 1);
+    }
+
+    #[test]
+    fn test_request_with_params_and_authorization() {
+        let mut req = Request::new_id(
+            42,
+            "blockchain.scripthash.get_balance",
+            vec![Param::String("test-scripthash".to_string())],
+        );
+        req.authorization = Some("Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9".to_string());
+
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], 42);
+        assert_eq!(parsed["method"], "blockchain.scripthash.get_balance");
+        assert_eq!(
+            parsed["authorization"],
+            "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
+        );
+        assert!(parsed["params"].is_array());
+        assert_eq!(parsed["params"][0], "test-scripthash");
+    }
+
+    #[test]
+    fn test_authorization_field_omitted_when_none() {
+        let req = Request::new_id(1, "test.method", vec![]);
+
+        let json = serde_json::to_string(&req).unwrap();
+
+        // The JSON should not contain the word "authorization" at all
+        assert!(!json.contains("authorization"));
     }
 }

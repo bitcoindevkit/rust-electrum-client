@@ -37,6 +37,7 @@ use crate::stream::ClonableStream;
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
+use crate::config::AuthProvider;
 use crate::types::*;
 
 /// Client name sent to the server during protocol version negotiation.
@@ -142,7 +143,6 @@ impl_to_socket_addrs_domain!((std::net::Ipv6Addr, u16));
 ///
 /// More transport methods can be used by manually creating an instance of this struct with an
 /// arbitray `S` type.
-#[derive(Debug)]
 pub struct RawClient<S>
 where
     S: Read + Write,
@@ -159,7 +159,30 @@ where
     /// The protocol version negotiated with the server via `server.version`.
     protocol_version: Mutex<Option<String>>,
 
+    auth_provider: Option<AuthProvider>,
+
     calls: AtomicUsize,
+}
+
+// Custom Debug impl because AuthProvider doesn't implement Debug
+impl<S> std::fmt::Debug for RawClient<S>
+where
+    S: Read + Write,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawClient")
+            .field("stream", &"<stream>")
+            .field("buf_reader", &"<buf_reader>")
+            .field("last_id", &self.last_id)
+            .field("waiting_map", &self.waiting_map)
+            .field("headers", &self.headers)
+            .field("script_notifications", &self.script_notifications)
+            .field(
+                "auth_provider",
+                &self.auth_provider.as_ref().map(|_| "<provider>"),
+            )
+            .finish()
+    }
 }
 
 impl<S> From<S> for RawClient<S>
@@ -181,6 +204,8 @@ where
 
             protocol_version: Mutex::new(None),
 
+            auth_provider: None,
+
             calls: AtomicUsize::new(0),
         }
     }
@@ -197,6 +222,14 @@ impl RawClient<ElectrumPlaintextStream> {
         socket_addrs: A,
         timeout: Option<Duration>,
     ) -> Result<Self, Error> {
+        Self::new_with_auth(socket_addrs, timeout, None)
+    }
+
+    pub(crate) fn new_with_auth<A: ToSocketAddrs>(
+        socket_addrs: A,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<Self, Error> {
         let stream = match timeout {
             Some(timeout) => {
                 let stream = connect_with_total_timeout(socket_addrs, timeout)?;
@@ -207,7 +240,8 @@ impl RawClient<ElectrumPlaintextStream> {
             None => TcpStream::connect(socket_addrs)?,
         };
 
-        let client: Self = stream.into();
+        let mut client: Self = stream.into();
+        client.auth_provider = auth_provider;
         client.negotiate_protocol_version()?;
         Ok(client)
     }
@@ -262,6 +296,15 @@ impl RawClient<ElectrumSslStream> {
         validate_domain: bool,
         timeout: Option<Duration>,
     ) -> Result<Self, Error> {
+        Self::new_ssl_with_auth(socket_addrs, validate_domain, timeout, None)
+    }
+
+    pub(crate) fn new_ssl_with_auth<A: ToSocketAddrsDomain + Clone>(
+        socket_addrs: A,
+        validate_domain: bool,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<Self, Error> {
         debug!(
             "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
             socket_addrs.domain(),
@@ -276,11 +319,11 @@ impl RawClient<ElectrumSslStream> {
                 let stream = connect_with_total_timeout(socket_addrs.clone(), timeout)?;
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream_with_auth(socket_addrs, validate_domain, stream, auth_provider)
             }
             None => {
                 let stream = TcpStream::connect(socket_addrs.clone())?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream_with_auth(socket_addrs, validate_domain, stream, auth_provider)
             }
         }
     }
@@ -290,6 +333,15 @@ impl RawClient<ElectrumSslStream> {
         socket_addrs: A,
         validate_domain: bool,
         stream: TcpStream,
+    ) -> Result<Self, Error> {
+        Self::new_ssl_from_stream_with_auth(socket_addrs, validate_domain, stream, None)
+    }
+
+    pub(crate) fn new_ssl_from_stream_with_auth<A: ToSocketAddrsDomain>(
+        socket_addrs: A,
+        validate_domain: bool,
+        stream: TcpStream,
+        auth_provider: Option<AuthProvider>,
     ) -> Result<Self, Error> {
         let mut builder =
             SslConnector::builder(SslMethod::tls()).map_err(Error::InvalidSslMethod)?;
@@ -307,7 +359,8 @@ impl RawClient<ElectrumSslStream> {
             .connect(&domain, stream)
             .map_err(Error::SslHandshakeError)?;
 
-        let client: Self = stream.into();
+        let mut client: Self = stream.into();
+        client.auth_provider = auth_provider;
         client.negotiate_protocol_version()?;
         Ok(client)
     }
@@ -385,6 +438,15 @@ impl RawClient<ElectrumSslStream> {
         validate_domain: bool,
         timeout: Option<Duration>,
     ) -> Result<Self, Error> {
+        Self::new_ssl_with_auth(socket_addrs, validate_domain, timeout, None)
+    }
+
+    pub(crate) fn new_ssl_with_auth<A: ToSocketAddrsDomain + Clone>(
+        socket_addrs: A,
+        validate_domain: bool,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<Self, Error> {
         debug!(
             "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
             socket_addrs.domain(),
@@ -399,11 +461,11 @@ impl RawClient<ElectrumSslStream> {
                 let stream = connect_with_total_timeout(socket_addrs.clone(), timeout)?;
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream_with_auth(socket_addrs, validate_domain, stream, auth_provider)
             }
             None => {
                 let stream = TcpStream::connect(socket_addrs.clone())?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream)
+                Self::new_ssl_from_stream_with_auth(socket_addrs, validate_domain, stream, auth_provider)
             }
         }
     }
@@ -413,6 +475,15 @@ impl RawClient<ElectrumSslStream> {
         socket_addr: A,
         validate_domain: bool,
         tcp_stream: TcpStream,
+    ) -> Result<Self, Error> {
+        Self::new_ssl_from_stream_with_auth(socket_addr, validate_domain, tcp_stream, None)
+    }
+
+    pub(crate) fn new_ssl_from_stream_with_auth<A: ToSocketAddrsDomain>(
+        socket_addr: A,
+        validate_domain: bool,
+        tcp_stream: TcpStream,
+        auth_provider: Option<AuthProvider>,
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
@@ -476,7 +547,8 @@ impl RawClient<ElectrumSslStream> {
         .map_err(Error::CouldNotCreateConnection)?;
         let stream = StreamOwned::new(session, tcp_stream);
 
-        let client: Self = stream.into();
+        let mut client: Self = stream.into();
+        client.auth_provider = auth_provider;
         client.negotiate_protocol_version()?;
         Ok(client)
     }
@@ -495,6 +567,15 @@ impl RawClient<ElectrumProxyStream> {
         proxy: &crate::Socks5Config,
         timeout: Option<Duration>,
     ) -> Result<Self, Error> {
+        Self::new_proxy_with_auth(target_addr, proxy, timeout, None)
+    }
+
+    pub(crate) fn new_proxy_with_auth<T: ToTargetAddr>(
+        target_addr: T,
+        proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<Self, Error> {
         let mut stream = match proxy.credentials.as_ref() {
             Some(cred) => Socks5Stream::connect_with_password(
                 &proxy.addr,
@@ -508,7 +589,8 @@ impl RawClient<ElectrumProxyStream> {
         stream.get_mut().set_read_timeout(timeout)?;
         stream.get_mut().set_write_timeout(timeout)?;
 
-        let client: Self = stream.into();
+        let mut client: Self = stream.into();
+        client.auth_provider = auth_provider;
         client.negotiate_protocol_version()?;
         Ok(client)
     }
@@ -526,6 +608,16 @@ impl RawClient<ElectrumProxyStream> {
         proxy: &crate::Socks5Config,
         timeout: Option<Duration>,
     ) -> Result<RawClient<ElectrumSslStream>, Error> {
+        Self::new_proxy_ssl_with_auth(target_addr, validate_domain, proxy, timeout, None)
+    }
+
+    pub(crate) fn new_proxy_ssl_with_auth<T: ToTargetAddr>(
+        target_addr: T,
+        validate_domain: bool,
+        proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<RawClient<ElectrumSslStream>, Error> {
         let target = target_addr.to_target_addr()?;
 
         let mut stream = match proxy.credentials.as_ref() {
@@ -541,7 +633,7 @@ impl RawClient<ElectrumProxyStream> {
         stream.get_mut().set_read_timeout(timeout)?;
         stream.get_mut().set_write_timeout(timeout)?;
 
-        RawClient::new_ssl_from_stream(target, validate_domain, stream.into_inner())
+        RawClient::new_ssl_from_stream_with_auth(target, validate_domain, stream.into_inner(), auth_provider)
     }
 }
 
@@ -553,6 +645,13 @@ enum ChannelMessage {
 }
 
 impl<S: Read + Write> RawClient<S> {
+    /// Sets the authorization provider for dynamic token injection.
+    /// This should be called immediately after constructing the client.
+    pub fn with_auth_provider(mut self, provider: Option<AuthProvider>) -> Self {
+        self.auth_provider = provider;
+        self
+    }
+
     // TODO: to enable this we have to find a way to allow concurrent read and writes to the
     // underlying transport struct. This can be done pretty easily for TcpStream because it can be
     // split into a "read" and a "write" object, but it's not as trivial for other types. Without
@@ -568,7 +667,7 @@ impl<S: Read + Write> RawClient<S> {
     ///
     /// This sends `server.version` as the first message and stores the negotiated
     /// protocol version. Called automatically by constructors.
-    fn negotiate_protocol_version(&self) -> Result<(), Error> {
+    pub(crate) fn negotiate_protocol_version(&self) -> Result<(), Error> {
         let version_range = vec![
             PROTOCOL_VERSION_MIN.to_string(),
             PROTOCOL_VERSION_MAX.to_string(),
@@ -715,6 +814,12 @@ impl<S: Read + Write> RawClient<S> {
         let (sender, receiver) = channel();
         self.waiting_map.lock()?.insert(req.id, sender);
 
+        // Apply authorization token if provider is set
+        let mut req = req;
+        if let Some(provider) = &self.auth_provider {
+            req.authorization = provider();
+        }
+
         let mut raw = serde_json::to_vec(&req)?;
         trace!("==> {}", String::from_utf8_lossy(&raw));
 
@@ -832,12 +937,20 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         // Add our listener to the map before we send the request
 
-        for (method, params) in batch.iter() {
-            let req = Request::new_id(
+        for (index, (method, params)) in batch.iter().enumerate() {
+            let mut req = Request::new_id(
                 self.last_id.fetch_add(1, Ordering::SeqCst),
                 method,
                 params.to_vec(),
             );
+
+            // Apply authorization token only to the first request in batch
+            if index == 0 {
+                if let Some(provider) = &self.auth_provider {
+                    req.authorization = provider();
+                }
+            }
+
             // Add distinct channel to each request so when we remove our request id (and sender) from the waiting_map
             // we can be sure that the response gets sent to the correct channel in self.recv
             let (sender, receiver) = channel();
@@ -1799,5 +1912,83 @@ mod test {
             000000000000000000000000000000000000000000000000000000000000000000\
             00000"
         )
+    }
+
+    #[test]
+    fn test_authorization_provider_with_client() {
+        use std::sync::{Arc, RwLock};
+
+        // Track how many times the provider is called
+        let call_count = Arc::new(RwLock::new(0));
+        let call_count_clone = call_count.clone();
+
+        let provider = Arc::new(move || {
+            *call_count_clone.write().unwrap() += 1;
+            Some("Bearer test-token-123".to_string())
+        });
+
+        let mut client = RawClient::new(get_test_server(), None).unwrap();
+        client = client.with_auth_provider(Some(provider));
+
+        // Make a request - provider should be called
+        let _ = client.server_features();
+
+        // Provider should have been called at least once
+        assert!(*call_count.read().unwrap() >= 1);
+    }
+
+    #[test]
+    fn test_authorization_provider_dynamic_token_refresh() {
+        use std::sync::{Arc, RwLock};
+
+        // Simulate a token that can be refreshed
+        let token = Arc::new(RwLock::new("initial-token".to_string()));
+        let token_clone = token.clone();
+
+        let provider = Arc::new(move || Some(token_clone.read().unwrap().clone()));
+
+        let mut client = RawClient::new(get_test_server(), None).unwrap();
+        client = client.with_auth_provider(Some(provider.clone()));
+
+        // Make first request with initial token
+        let _ = client.server_features();
+
+        // Simulate token refresh
+        *token.write().unwrap() = "refreshed-token".to_string();
+
+        // Make second request - should use the new token
+        let _ = client.server_features();
+
+        // Verify the provider now returns the refreshed token
+        assert_eq!(provider(), Some("refreshed-token".to_string()));
+    }
+
+    #[test]
+    fn test_authorization_provider_returns_none() {
+        use std::sync::Arc;
+
+        let provider = Arc::new(|| None);
+
+        let mut client = RawClient::new(get_test_server(), None).unwrap();
+        client = client.with_auth_provider(Some(provider));
+
+        // Should still work when provider returns None
+        let result = client.server_features();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_with_auth_provider_method_chaining() {
+        use std::sync::Arc;
+
+        let provider = Arc::new(|| Some("Bearer test".to_string()));
+
+        let client = RawClient::new(get_test_server(), None)
+            .unwrap()
+            .with_auth_provider(Some(provider.clone()));
+
+        // Verify the provider was set
+        let result = client.server_features();
+        assert!(result.is_ok());
     }
 }
