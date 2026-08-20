@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.1]
+
+### Added
+
+- Add `protocol_version()` to `ElectrumApi`, returning the protocol version negotiated during connection setup #213
+
+### Fixed
+
+- Fix `rustls` to handle concurrent `CryptoProvider` initialization #217
+- Fix `authorization` token leaking into TRACE logs in `call` and `batch_call` #218
+- Fix concurrent requests on EOF #225
+
 ## [0.25.0]
 
 ### Added
@@ -92,4 +104,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.24.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.23.1...0.24.0
 [0.24.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.0...0.24.1
 [0.25.0]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.24.1...0.25.0
-[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.25.0...HEAD
+[0.25.1]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.25.0...0.25.1
+[Unreleased]: https://github.com/bitcoindevkit/rust-electrum-client/compare/0.25.1...HEAD
