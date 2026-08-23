@@ -1,8 +1,45 @@
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 name: CI
 
 jobs:
+  auth_integration:
+    name: Auth integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache Keycloak Docker image
+        id: cache-keycloak
+        uses: actions/cache@v4
+        with:
+          path: ~/keycloak-image.tar
+          key: ${{ runner.os }}-docker-keycloak-20.0.2
+
+      - name: Load Keycloak Docker image
+        if: steps.cache-keycloak.outputs.cache-hit == 'true'
+        run: docker load -i ~/keycloak-image.tar
+
+      - name: Pull and Save Keycloak Docker image
+        if: steps.cache-keycloak.outputs.cache-hit != 'true'
+        run: |
+          docker pull quay.io/keycloak/keycloak:20.0.2
+          docker save quay.io/keycloak/keycloak:20.0.2 -o ~/keycloak-image.tar
+
+      - name: Run auth integration test
+        run: cargo test --test auth_integration
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -36,7 +73,7 @@ jobs:
           cargo update -p zeroize --precise "1.8.2"
           cargo update -p jobserver --precise "0.1.34"
       - name: Test
-        run: cargo test --verbose --all-features
+        run: cargo test --verbose --all-features --lib --bins --examples
 
   check:
     name: Check
