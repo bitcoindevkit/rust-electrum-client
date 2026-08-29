@@ -174,7 +174,7 @@ where
         &self,
         height: usize,
         tx_pos: usize,
-    ) -> Result<TxidFromPosRes, Error> {
+    ) -> Result<TxidFromPosMerkleRes, Error> {
         (**self).txid_from_pos_with_merkle(height, tx_pos)
     }
 
@@ -444,7 +444,7 @@ pub trait ElectrumApi {
         &self,
         height: usize,
         tx_pos: usize,
-    ) -> Result<TxidFromPosRes, Error>;
+    ) -> Result<TxidFromPosMerkleRes, Error>;
 
     /// Returns the capabilities of the server.
     fn server_features(&self) -> Result<ServerFeaturesRes, Error>;
@@ -689,7 +689,7 @@ mod test {
             &self,
             _: usize,
             _: usize,
-        ) -> Result<super::TxidFromPosRes, super::Error> {
+        ) -> Result<super::TxidFromPosMerkleRes, super::Error> {
             unreachable!()
         }
 

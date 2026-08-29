@@ -406,7 +406,7 @@ impl ElectrumApi for Client {
         &self,
         height: usize,
         tx_pos: usize,
-    ) -> Result<TxidFromPosRes, Error> {
+    ) -> Result<TxidFromPosMerkleRes, Error> {
         impl_inner_call!(self, txid_from_pos_with_merkle, height, tx_pos)
     }
 
