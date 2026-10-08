@@ -447,6 +447,12 @@ pub enum Error {
     AllAttemptsErrored(Vec<Error>),
     /// There was an io error reading the socket, to be shared between threads
     SharedIOError(Arc<std::io::Error>),
+    #[cfg(feature = "tofu")]
+    /// Certificate presented by server changed compared to saved TOFU value
+    TlsCertificateChanged(String),
+    #[cfg(feature = "tofu")]
+    /// Error while reading/writing TOFU certificate storage
+    TofuPersistError(std::io::Error),
 
     /// Couldn't take a lock on the reader mutex. This means that there's already another reader
     /// thread running
@@ -473,6 +479,8 @@ impl Display for Error {
             Error::Hex(e) => Display::fmt(e, f),
             Error::Bitcoin(e) => Display::fmt(e, f),
             Error::SharedIOError(e) => Display::fmt(e, f),
+            #[cfg(feature = "tofu")]
+            Error::TofuPersistError(e) => Display::fmt(e, f),
             #[cfg(feature = "openssl")]
             Error::SslHandshakeError(e) => Display::fmt(e, f),
             #[cfg(feature = "openssl")]
@@ -503,6 +511,10 @@ impl Display for Error {
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+            #[cfg(feature = "tofu")]
+            Error::TlsCertificateChanged(domain) => {
+                write!(f, "TLS certificate changed for host: {}", domain)
+            }
         }
     }
 }
