@@ -1367,7 +1367,13 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn txid_from_pos(&self, height: usize, tx_pos: usize) -> Result<Txid, Error> {
-        let params = vec![Param::Usize(height), Param::Usize(tx_pos)];
+        // The `merkle` flag is optional per the protocol, but some server implementations (e.g.
+        // `electrs`) reject requests that omit it, so send it explicitly.
+        let params = vec![
+            Param::Usize(height),
+            Param::Usize(tx_pos),
+            Param::Bool(false),
+        ];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
             "blockchain.transaction.id_from_pos",
@@ -1375,14 +1381,14 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         );
         let result = self.call(req)?;
 
-        Ok(serde_json::from_value(result)?)
+        Ok(serde_json::from_value::<TxidFromPosRes>(result)?.into())
     }
 
     fn txid_from_pos_with_merkle(
         &self,
         height: usize,
         tx_pos: usize,
-    ) -> Result<TxidFromPosRes, Error> {
+    ) -> Result<TxidFromPosMerkleRes, Error> {
         let params = vec![
             Param::Usize(height),
             Param::Usize(tx_pos),
