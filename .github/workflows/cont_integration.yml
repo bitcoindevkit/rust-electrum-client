@@ -28,6 +28,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
+      - name: Pin dependencies for MSRV
+        if: matrix.rust == '1.75.0'
+        run: |
+          cargo update -p openssl --precise "0.10.78"
+          cargo update -p openssl-sys --precise "0.9.114"
+          cargo update -p zeroize --precise "1.8.2"
+          cargo update -p jobserver --precise "0.1.34"
       - name: Test
         run: cargo test --verbose --all-features
       - name: Setup iptables for the timeout test
