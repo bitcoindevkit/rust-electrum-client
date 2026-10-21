@@ -1,6 +1,6 @@
 [package]
 name = "electrum-client"
-version = "0.25.1"
+version = "0.25.2"
 authors = ["Alekos Filini <alekos.filini@gmail.com>"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/bitcoindevkit/rust-electrum-client"

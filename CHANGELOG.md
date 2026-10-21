@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.2]
+
+### Changed
+
+- Bump `webpki-roots` version from `0.25` to `1.0.10` #231
+
 ## [0.25.1]
 
 ### Added
