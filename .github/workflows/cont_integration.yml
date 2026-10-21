@@ -73,8 +73,6 @@ jobs:
         with:
           toolchain: 1.84.0
           components: clippy
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2.2.1
       - name: Pin dependencies for MSRV
         run: |
           cargo update -p openssl --precise "0.10.78"
