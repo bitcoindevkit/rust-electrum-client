@@ -30,11 +30,7 @@ use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
     ),
     not(feature = "use-openssl")
 ))]
-use rustls::{
-    pki_types::ServerName,
-    pki_types::{Der, TrustAnchor},
-    ClientConfig, ClientConnection, RootCertStore, StreamOwned,
-};
+use rustls::{pki_types::ServerName, ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 
 #[cfg(any(feature = "default", feature = "proxy"))]
 use crate::socks::{Socks5Stream, TargetAddr, ToTargetAddr};
@@ -434,14 +430,9 @@ impl RawClient<ElectrumSslStream> {
         let config = if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
-            let store = webpki_roots::TLS_SERVER_ROOTS
-                .iter()
-                .map(|t| TrustAnchor {
-                    subject: Der::from_slice(t.subject),
-                    subject_public_key_info: Der::from_slice(t.spki),
-                    name_constraints: t.name_constraints.map(Der::from_slice),
-                })
-                .collect::<RootCertStore>();
+            let store = RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
 
             // TODO: cert pinning
             builder.with_root_certificates(store).with_no_client_auth()
