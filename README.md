@@ -25,6 +25,7 @@ cargo update -p openssl --precise "0.10.78"
 cargo update -p openssl-sys --precise "0.9.114"
 cargo update -p zeroize --precise "1.8.2"
 cargo update -p jobserver --precise "0.1.34"
+cargo update -p tokio --precise "1.53.3"
 ```
 
 ## License
