@@ -18,6 +18,10 @@ edition = "2021"
 name = "electrum_client"
 path = "src/lib.rs"
 
+[[example]]
+name = "tofu"
+required-features = ["tofu"]
+
 [dependencies]
 log = "^0.4"
 bitcoin = { version = "0.32", features = ["serde"] }
@@ -43,6 +47,7 @@ proxy = ["byteorder", "winapi", "libc"]
 rustls = ["webpki-roots", "dep:rustls", "rustls/default"]
 rustls-ring = ["webpki-roots", "dep:rustls", "rustls/ring", "rustls/logging", "rustls/std", "rustls/tls12"]
 openssl = ["dep:openssl"]
+tofu = []
 
 # Old feature names
 use-rustls = ["rustls"]
