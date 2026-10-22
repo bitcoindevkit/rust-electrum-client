@@ -840,7 +840,12 @@ impl<S: Read + Write> RawClient<S> {
                 Err(Error::CouldntLockReader) => {
                     match receiver.recv()? {
                         // Received our response, returning it
-                        ChannelMessage::Response(received) => break Ok(received),
+                        ChannelMessage::Response(received) => {
+                            if let Some(err) = received.get("error") {
+                                break Err(Error::Protocol(err.clone()));
+                            }
+                            break Ok(received);
+                        }
                         ChannelMessage::WakeUp => {
                             // We have been woken up, this means that we should try becoming the
                             // reader thread ourselves
@@ -1544,6 +1549,24 @@ mod test {
                     if error.kind() == io::ErrorKind::UnexpectedEof
             ));
         }
+    }
+
+    #[test]
+    fn batch_call_returns_error_for_out_of_order_error_response() {
+        // id 1 errors and arrives before id 0, so it's routed through the channel
+        let responses = concat!(
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":2,"message":"daemon error"}}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":0,"result":null}"#,
+            "\n",
+        );
+        let client = RawClient::from(MockStream::new(responses));
+
+        let mut batch = crate::Batch::default();
+        batch.raw("server.ping".into(), vec![]);
+        batch.raw("blockchain.transaction.get".into(), vec![]);
+
+        assert!(matches!(client.batch_call(&batch), Err(Error::Protocol(_))));
     }
 
     fn get_test_auth_client(
