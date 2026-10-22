@@ -49,7 +49,9 @@ use-rustls = ["rustls"]
 use-rustls-ring = ["rustls-ring"]
 use-openssl = ["openssl"]
 
-# optional dependencies only used in `jwt_dynamic_auth` example
+# optional dependencies only used in examples and integration tests
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 bitreq = { version = "0.3.4", features = ["async-https", "json-using-serde"] }
+bdk_testenv = "0.13.1"
+testcontainers = { version = "0.17", features = ["blocking"] }
