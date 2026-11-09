@@ -596,6 +596,7 @@ enum ChannelMessage {
     Response(serde_json::Value),
     WakeUp,
     Error(Arc<std::io::Error>),
+    InvalidResponse(serde_json::Value),
 }
 
 impl<S: Read + Write> RawClient<S> {
@@ -713,7 +714,7 @@ impl<S: Read + Write> RawClient<S> {
                     }
                     trace!("<== {}", raw_resp);
 
-                    let resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
+                    let mut resp: serde_json::Value = serde_json::from_str(&raw_resp)?;
 
                     // Normally there is and id, but it's missing for spontaneous notifications
                     // from the server
@@ -763,12 +764,46 @@ impl<S: Read + Write> RawClient<S> {
                         }
                         None => {
                             // No id, that's probably a notification.
-                            let mut resp = resp;
+                            if resp.is_object() {
+                                // Never index mutably into a value we haven't proven to be an
+                                // object: doing so panics on scalars and arrays.
+                                let method = resp
+                                    .get("method")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned);
 
-                            if let Some(method) = resp["method"].take().as_str() {
-                                self.handle_notification(method, resp["params"].take())?;
-                            } else {
+                                if let Some(method) = method {
+                                    let params = resp
+                                        .get_mut("params")
+                                        .map(serde_json::Value::take)
+                                        .unwrap_or(serde_json::Value::Null);
+                                    self.handle_notification(&method, params)?;
+                                } else {
+                                    warn!("Unexpected response: {:?}", resp);
+                                }
+                            } else if resp.is_null() {
+                                // A null value has historically been ignored, since it carries
+                                // no notification payload. Keep accepting it to preserve behavior.
                                 warn!("Unexpected response: {:?}", resp);
+                            } else {
+                                // Only JSON objects can be notifications. Anything else without an
+                                // id is a protocol violation: reject it instead of panicking on
+                                // mutable indexing, and wake every blocked caller so none of them
+                                // can deadlock waiting for a response that will never arrive.
+                                warn!("Unexpected non-object response: {:?}", resp);
+
+                                let mut waiting_map = self.waiting_map.lock()?;
+                                for (_, sender) in waiting_map.drain() {
+                                    if sender
+                                        .send(ChannelMessage::InvalidResponse(resp.clone()))
+                                        .is_err()
+                                    {
+                                        warn!(
+                                            "Receiver disconnected while reporting an invalid response"
+                                        );
+                                    }
+                                }
+                                return Err(Error::InvalidResponse(resp));
                             }
                         }
                     }
@@ -852,6 +887,11 @@ impl<S: Read + Write> RawClient<S> {
                             warn!("Received ChannelMessage::Error");
 
                             break Err(Error::SharedIOError(e));
+                        }
+                        ChannelMessage::InvalidResponse(resp) => {
+                            warn!("Received ChannelMessage::InvalidResponse");
+
+                            break Err(Error::InvalidResponse(resp));
                         }
                     }
                 }
@@ -1544,6 +1584,89 @@ mod test {
                     if error.kind() == io::ErrorKind::UnexpectedEof
             ));
         }
+    }
+
+    #[test]
+    fn non_object_notifications_are_rejected_without_panicking() {
+        // Id-less scalar and array values used to panic on mutable indexing while looking up the
+        // notification method. They must now surface as an ordinary protocol error.
+        for payload in ["5", "[1, 2]", "\"scalar\"", "true"] {
+            let expected: serde_json::Value = serde_json::from_str(payload).unwrap();
+            let stream =
+                MockStream::new(format!("{payload}\n{}", server_version_response(0, "1.4")));
+            let client = RawClient::from(stream);
+
+            match client.request_server_version() {
+                Err(Error::InvalidResponse(value)) => assert_eq!(value, expected),
+                other => panic!("expected InvalidResponse for `{payload}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_notification_wakes_all_waiting_requests() {
+        // A malformed notification must not leave other callers blocked forever waiting for a
+        // response that will never be read.
+        let client = RawClient::from(MockStream::new(b"5\n".to_vec()));
+        let (disconnected_sender, disconnected_receiver) = mpsc::channel();
+        drop(disconnected_receiver);
+        let (first_sender, first_receiver) = mpsc::channel();
+        let (second_sender, second_receiver) = mpsc::channel();
+        {
+            let mut waiting_map = client.waiting_map.lock().unwrap();
+            waiting_map.insert(0, disconnected_sender);
+            waiting_map.insert(1, first_sender);
+            waiting_map.insert(2, second_sender);
+        }
+
+        let reader_error = client._reader_thread(Some(1)).unwrap_err();
+        assert!(matches!(
+            reader_error,
+            Error::InvalidResponse(value) if value == serde_json::json!(5)
+        ));
+        assert!(client.waiting_map.lock().unwrap().is_empty());
+
+        for receiver in [first_receiver, second_receiver] {
+            let message = receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("invalid notification must wake every waiting request");
+            assert!(matches!(
+                message,
+                ChannelMessage::InvalidResponse(value) if value == serde_json::json!(5)
+            ));
+        }
+    }
+
+    #[test]
+    fn null_notification_is_ignored_and_request_completes() {
+        // Negative control from the report: an id-less null is still ignored and the in-flight
+        // request is served from the following line.
+        let stream = MockStream::new(format!("null\n{}", server_version_response(0, "1.4")));
+        let client = RawClient::from(stream);
+
+        let response = client.request_server_version().unwrap();
+        assert_eq!(response.protocol_version, "1.4");
+    }
+
+    #[test]
+    fn valid_notification_is_processed_before_the_response() {
+        let notification =
+            r#"{"method":"blockchain.headers.subscribe","params":[{"height":42,"hex":"00"}]}"#;
+        let stream = MockStream::new(format!(
+            "{notification}\n{}",
+            server_version_response(0, "1.4")
+        ));
+        let client = RawClient::from(stream);
+
+        let response = client.request_server_version().unwrap();
+        assert_eq!(response.protocol_version, "1.4");
+
+        let notification = client
+            .block_headers_pop_raw()
+            .unwrap()
+            .expect("the valid notification should have been queued");
+        assert_eq!(notification.height, 42);
+        assert_eq!(notification.header, vec![0]);
     }
 
     fn get_test_auth_client(
