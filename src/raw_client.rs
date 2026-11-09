@@ -745,7 +745,7 @@ impl<S: Read + Write> RawClient<S> {
                                     .err()
                             }) {
                                 error!("All the threads has failed, giving up");
-                                return Err(err)?;
+                                return Err(err.into());
                             }
 
                             break Ok(resp);
@@ -1061,10 +1061,28 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         } else {
             // v1.4: hex field contains concatenated headers
             let deserialized: GetHeadersResLegacy = serde_json::from_value(result)?;
-            let mut headers = Vec::new();
-            for i in 0..deserialized.count {
-                let (start, end) = (i * 80, (i + 1) * 80);
-                headers.push(deserialize(&deserialized.raw_headers[start..end])?);
+
+            // The server controls both `count` and the encoded headers, so make sure the
+            // decoded byte length matches exactly what `count` implies before slicing it into
+            // fixed-size headers. `checked_mul` keeps an oversized `count` from overflowing.
+            let expected_len = deserialized.count.checked_mul(80).ok_or_else(|| {
+                Error::InvalidResponse(serde_json::json!({
+                    "message": "header count is too large",
+                    "count": deserialized.count,
+                }))
+            })?;
+            if deserialized.raw_headers.len() != expected_len {
+                return Err(Error::InvalidResponse(serde_json::json!({
+                    "message": "number of header bytes does not match count",
+                    "count": deserialized.count,
+                    "expected_len": expected_len,
+                    "actual_len": deserialized.raw_headers.len(),
+                })));
+            }
+
+            let mut headers = Vec::with_capacity(deserialized.count);
+            for header in deserialized.raw_headers.chunks_exact(80) {
+                headers.push(deserialize(header)?);
             }
             Ok(GetHeadersRes {
                 max: deserialized.max,
@@ -1513,6 +1531,26 @@ mod test {
         assert_eq!(request["params"], serde_json::json!(["", ["1.4", "1.6"]]));
     }
 
+    /// Hex of the Bitcoin genesis block header, used to check decoding of a full header.
+    const GENESIS_HEADER_HEX: &str = "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c";
+
+    /// Builds a client that negotiates `protocol_version` and replies to `blockchain.block.headers`
+    /// with a legacy (`hex` string) response containing `headers_hex` and `count`.
+    fn legacy_block_headers_client(
+        protocol_version: &str,
+        headers_hex: &str,
+        count: usize,
+    ) -> RawClient<MockStream> {
+        let block_headers_response = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"count":{count},"max":8,"hex":"{headers_hex}"}}}}"#
+        ) + "\n";
+        let responses = server_version_response(0, protocol_version) + &block_headers_response;
+
+        RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap()
+    }
+
     #[test]
     fn clean_eof_wakes_all_waiting_requests() {
         let client = RawClient::from(MockStream::new(Vec::new()));
@@ -1593,6 +1631,57 @@ mod test {
         let requests = stream_handle.written_requests();
         assert_eq!(requests.len(), 1);
         assert_server_version_request(&requests[0]);
+    }
+
+    #[test]
+    fn test_legacy_block_headers_empty_hex_with_nonzero_count_returns_error() {
+        let client = legacy_block_headers_client("1.4", "", 1);
+
+        let err = client.block_headers(0, 1).unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidResponse(_)),
+            "expected an invalid response error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_legacy_block_headers_truncated_hex_returns_error() {
+        // `count` says three headers but the server only sent one.
+        let client = legacy_block_headers_client("1.4", GENESIS_HEADER_HEX, 3);
+
+        let err = client.block_headers(0, 3).unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidResponse(_)),
+            "expected an invalid response error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_legacy_block_headers_oversized_count_returns_error() {
+        // `count * 80` must not overflow when validating the decoded length.
+        let client = legacy_block_headers_client("1.4", "", usize::MAX);
+
+        let err = client.block_headers(0, usize::MAX).unwrap_err();
+
+        assert!(
+            matches!(err, Error::InvalidResponse(_)),
+            "expected an invalid response error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_legacy_block_headers_valid_single_header() {
+        // Negative control: one complete 80-byte header with `count` = 1 must still decode.
+        let client = legacy_block_headers_client("1.4", GENESIS_HEADER_HEX, 1);
+
+        let resp = client.block_headers(0, 1).unwrap();
+
+        assert_eq!(resp.count, 1);
+        assert_eq!(resp.max, 8);
+        assert_eq!(resp.headers.len(), 1);
+        assert_eq!(resp.headers[0].time, 1231006505);
     }
 
     #[test]
