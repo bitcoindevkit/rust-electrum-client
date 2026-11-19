@@ -327,6 +327,8 @@ pub struct ServerFeaturesRes {
     /// Maximum supported version of the protocol.
     pub protocol_max: String,
     /// Hash function used to create the [`ScriptHash`](type.ScriptHash.html).
+    ///
+    /// Not reported by servers from protocol v1.7 on.
     pub hash_function: Option<String>,
     /// Pruned height of the server.
     pub pruning: Option<i64>,
