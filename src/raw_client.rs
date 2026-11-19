@@ -19,7 +19,7 @@ use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{OutPoint, Script, Txid};
 
 #[cfg(feature = "openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -186,6 +186,7 @@ where
 
     headers: Mutex<VecDeque<RawHeaderNotification>>,
     script_notifications: Mutex<HashMap<ScriptHash, VecDeque<ScriptStatus>>>,
+    outpoint_notifications: Mutex<HashMap<OutPoint, VecDeque<OutpointStatus>>>,
 
     /// The protocol version negotiated with the server via `server.version`.
     protocol_version: Mutex<Option<String>>,
@@ -209,6 +210,7 @@ where
             .field("waiting_map", &self.waiting_map)
             .field("headers", &self.headers)
             .field("script_notifications", &self.script_notifications)
+            .field("outpoint_notifications", &self.outpoint_notifications)
             .field(
                 "auth_provider",
                 &self.auth_provider.as_ref().map(|_| "<provider>"),
@@ -233,6 +235,7 @@ where
 
             headers: Mutex::new(VecDeque::new()),
             script_notifications: Mutex::new(HashMap::new()),
+            outpoint_notifications: Mutex::new(HashMap::new()),
 
             protocol_version: Mutex::new(None),
 
@@ -940,6 +943,18 @@ impl<S: Read + Write> RawClient<S> {
                     ),
                 }
             }
+            "blockchain.outpoint.subscribe" => {
+                let OutpointNotification(txid, vout, status) = serde_json::from_value(result)?;
+                let outpoint = OutPoint::new(txid, vout);
+
+                match self.outpoint_notifications.lock()?.get_mut(&outpoint) {
+                    Some(queue) => queue.push_back(status),
+                    None => warn!(
+                        "ignoring notification for unsubscribed outpoint {}",
+                        outpoint
+                    ),
+                }
+            }
             // Since protocol v1.7 servers may send these unrequested to pad traffic; they carry
             // no information and must not be answered.
             "server.ping" => {}
@@ -947,6 +962,24 @@ impl<S: Read + Write> RawClient<S> {
         }
 
         Ok(())
+    }
+
+    /// Sends an outpoint call, with `spk_hint` as the last parameter if given.
+    fn outpoint_call(
+        &self,
+        method: &str,
+        outpoint: &OutPoint,
+        spk_hint: Option<&Script>,
+    ) -> Result<serde_json::Value, Error> {
+        let mut params = vec![
+            Param::String(outpoint.txid.to_string()),
+            Param::U32(outpoint.vout),
+        ];
+        if let Some(script) = spk_hint {
+            params.push(Param::String(script.as_bytes().to_lower_hex_string()));
+        }
+
+        self.internal_raw_call_with_vec(method, params)
     }
 
     pub(crate) fn internal_raw_call_with_vec(
@@ -1282,6 +1315,59 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         I::Item: Borrow<&'s Script>,
     {
         impl_batch_call!(self, scripts, script_list_unspent, via ScriptUtxosResponse)
+    }
+
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        {
+            let mut outpoint_notifications = self.outpoint_notifications.lock()?;
+            if outpoint_notifications.contains_key(outpoint) {
+                return Err(Error::AlreadySubscribedOutpoint(*outpoint));
+            }
+            // Registered before sending, so that no notification racing the response is lost.
+            outpoint_notifications.insert(*outpoint, VecDeque::new());
+        }
+
+        let result = self
+            .outpoint_call("blockchain.outpoint.subscribe", outpoint, Some(script))
+            .and_then(|value| Ok(serde_json::from_value(value)?));
+        if result.is_err() {
+            self.outpoint_notifications.lock()?.remove(outpoint);
+        }
+
+        result
+    }
+
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error> {
+        if !self.outpoint_notifications.lock()?.contains_key(outpoint) {
+            return Err(Error::NotSubscribedOutpoint(*outpoint));
+        }
+
+        let value = self.outpoint_call("blockchain.outpoint.unsubscribe", outpoint, None)?;
+        let answer = serde_json::from_value(value)?;
+        self.outpoint_notifications.lock()?.remove(outpoint);
+
+        Ok(answer)
+    }
+
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        let value = self.outpoint_call("blockchain.outpoint.get_status", outpoint, Some(script))?;
+
+        Ok(serde_json::from_value(value)?)
+    }
+
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
+        match self.outpoint_notifications.lock()?.get_mut(outpoint) {
+            None => Err(Error::NotSubscribedOutpoint(*outpoint)),
+            Some(queue) => Ok(queue.pop_front()),
+        }
     }
 
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
@@ -1931,6 +2017,149 @@ mod test {
         assert!(client.script_pop(&script).unwrap().is_none());
     }
 
+    fn test_outpoint() -> bitcoin::OutPoint {
+        bitcoin::OutPoint::new(bitcoin::Txid::from_str(TXID_A).unwrap(), 3)
+    }
+
+    fn assert_outpoint_request(
+        request: &serde_json::Value,
+        method: &str,
+        outpoint: &bitcoin::OutPoint,
+        script: Option<&bitcoin::Script>,
+    ) {
+        use bitcoin::hex::DisplayHex;
+
+        let mut params = vec![
+            serde_json::json!(outpoint.txid.to_string()),
+            serde_json::json!(outpoint.vout),
+        ];
+        if let Some(script) = script {
+            params.push(serde_json::json!(script.as_bytes().to_lower_hex_string()));
+        }
+        assert_eq!(request["method"], method);
+        assert_eq!(request["params"], serde_json::Value::Array(params));
+    }
+
+    #[test]
+    fn outpoint_calls_send_outpoint_and_spk_hint() {
+        use bitcoin::Txid;
+        use std::str::FromStr;
+
+        let outpoint = test_outpoint();
+        let script = test_script(1);
+        let (client, stream) = mock_client(
+            "1.7",
+            &[
+                r#"{"funder_height":700000}"#,
+                &format!(
+                    r#"{{"funder_height":700000,"spender_txhash":"{TXID_B}","spender_height":-1}}"#
+                ),
+                "{}",
+                "true",
+            ],
+        );
+
+        let status = client.outpoint_subscribe(&outpoint, &script).unwrap();
+        assert_eq!(
+            status,
+            crate::OutpointStatus {
+                funder_height: Some(700_000),
+                spender_txhash: None,
+                spender_height: None,
+            }
+        );
+
+        let status = client.outpoint_get_status(&outpoint, &script).unwrap();
+        assert_eq!(status.spender_txhash, Some(Txid::from_str(TXID_B).unwrap()));
+        assert_eq!(status.spender_height, Some(-1));
+
+        assert_eq!(
+            client.outpoint_get_status(&outpoint, &script).unwrap(),
+            crate::OutpointStatus::default()
+        );
+        assert!(client.outpoint_unsubscribe(&outpoint).unwrap());
+
+        let requests = stream.written_requests();
+        assert_eq!(requests.len(), 5);
+        let subscribe = "blockchain.outpoint.subscribe";
+        assert_outpoint_request(&requests[1], subscribe, &outpoint, Some(&script));
+        let get_status = "blockchain.outpoint.get_status";
+        assert_outpoint_request(&requests[2], get_status, &outpoint, Some(&script));
+        assert_outpoint_request(&requests[3], get_status, &outpoint, Some(&script));
+        let unsubscribe = "blockchain.outpoint.unsubscribe";
+        assert_outpoint_request(&requests[4], unsubscribe, &outpoint, None);
+    }
+
+    #[test]
+    fn outpoint_notifications_are_queued_per_subscription() {
+        let outpoint = test_outpoint();
+        let other_outpoint = bitcoin::OutPoint::new(outpoint.txid, 4);
+        let notification = |vout: u32| {
+            format!(
+                r#"{{"jsonrpc":"2.0","method":"blockchain.outpoint.subscribe","params":["{TXID_A}",{vout},{{"funder_height":700000,"spender_txhash":"{TXID_B}","spender_height":0}}]}}"#
+            ) + "\n"
+        };
+        let responses = server_version_response(0, "1.7")
+            + r#"{"jsonrpc":"2.0","id":1,"result":{}}"#
+            + "\n"
+            + &notification(outpoint.vout)
+            + &notification(other_outpoint.vout)
+            + r#"{"jsonrpc":"2.0","id":2,"result":null}"#
+            + "\n";
+        let client = RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap();
+
+        assert_eq!(
+            client
+                .outpoint_subscribe(&outpoint, &test_script(1))
+                .unwrap(),
+            crate::OutpointStatus::default()
+        );
+        // Reading the notifications, including one for an outpoint we never subscribed to,
+        // must not fail this unrelated call.
+        client.ping().unwrap();
+
+        let status = client.outpoint_pop(&outpoint).unwrap().unwrap();
+        assert_eq!(status.spender_height, Some(0));
+        assert!(client.outpoint_pop(&outpoint).unwrap().is_none());
+        assert!(matches!(
+            client.outpoint_pop(&other_outpoint),
+            Err(Error::NotSubscribedOutpoint(op)) if op == other_outpoint
+        ));
+    }
+
+    #[test]
+    fn outpoint_subscription_state_is_tracked() {
+        let outpoint = test_outpoint();
+        let script = test_script(1);
+        let responses = server_version_response(0, "1.7")
+            + r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown method"}}"#
+            + "\n"
+            + r#"{"jsonrpc":"2.0","id":2,"result":{}}"#
+            + "\n";
+        let client = RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap();
+
+        assert!(matches!(
+            client.outpoint_unsubscribe(&outpoint),
+            Err(Error::NotSubscribedOutpoint(op)) if op == outpoint
+        ));
+        // A failed subscription must not leave the outpoint marked as subscribed.
+        assert!(matches!(
+            client.outpoint_subscribe(&outpoint, &script),
+            Err(Error::Protocol(_))
+        ));
+        assert!(client.outpoint_pop(&outpoint).is_err());
+
+        client.outpoint_subscribe(&outpoint, &script).unwrap();
+        assert!(matches!(
+            client.outpoint_subscribe(&outpoint, &script),
+            Err(Error::AlreadySubscribedOutpoint(op)) if op == outpoint
+        ));
+    }
+
     #[test]
     fn test_server_features_simple() {
         let client = get_test_client();
@@ -2389,6 +2618,37 @@ mod test {
             // Just make sure that the call returns Ok(something)
             client.script_subscribe(&addr.script_pubkey()).unwrap();
         }
+    }
+
+    #[test]
+    fn test_outpoint_get_status_and_subscribe() {
+        use bitcoin::{OutPoint, Txid};
+        use std::str::FromStr;
+
+        let client = get_test_client();
+
+        // An unspent output of Peter todd's sha256 bounty address
+        let script = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+            .unwrap()
+            .assume_checked()
+            .script_pubkey();
+        let txid = "397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0";
+        let outpoint = OutPoint::new(Txid::from_str(txid).unwrap(), 1);
+        let expected = crate::OutpointStatus {
+            funder_height: Some(257674),
+            spender_txhash: None,
+            spender_height: None,
+        };
+
+        assert_eq!(
+            client.outpoint_get_status(&outpoint, &script).unwrap(),
+            expected
+        );
+        assert_eq!(
+            client.outpoint_subscribe(&outpoint, &script).unwrap(),
+            expected
+        );
+        assert!(client.outpoint_unsubscribe(&outpoint).unwrap());
     }
 
     #[test]

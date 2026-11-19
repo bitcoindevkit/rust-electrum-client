@@ -6,7 +6,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{Script, Txid};
+use bitcoin::{OutPoint, Script, Txid};
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
@@ -55,7 +55,11 @@ macro_rules! impl_inner_call {
             drop(read_client);
             match res {
                 Ok(val) => return Ok(val),
-                Err(Error::Protocol(_) | Error::AlreadySubscribed(_)) => {
+                Err(
+                    Error::Protocol(_)
+                    | Error::AlreadySubscribed(_)
+                    | Error::AlreadySubscribedOutpoint(_),
+                ) => {
                     return res;
                 },
                 Err(e) => {
@@ -342,6 +346,34 @@ impl ElectrumApi for Client {
         I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_list_unspent, scripts.clone())
+    }
+
+    #[inline]
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        impl_inner_call!(self, outpoint_subscribe, outpoint, script)
+    }
+
+    #[inline]
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error> {
+        impl_inner_call!(self, outpoint_unsubscribe, outpoint)
+    }
+
+    #[inline]
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        impl_inner_call!(self, outpoint_get_status, outpoint, script)
+    }
+
+    #[inline]
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
+        impl_inner_call!(self, outpoint_pop, outpoint)
     }
 
     #[inline]

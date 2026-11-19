@@ -7,7 +7,7 @@ use std::convert::TryInto;
 use std::ops::Deref;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{block, Script, Transaction, Txid};
+use bitcoin::{block, OutPoint, Script, Transaction, Txid};
 
 use crate::batch::Batch;
 use crate::raw_client::{CLIENT_NAME, PROTOCOL_VERSION_MAX, PROTOCOL_VERSION_MIN};
@@ -122,6 +122,30 @@ where
         I::Item: Borrow<&'s Script>,
     {
         (**self).batch_script_list_unspent(scripts)
+    }
+
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        (**self).outpoint_subscribe(outpoint, script)
+    }
+
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error> {
+        (**self).outpoint_unsubscribe(outpoint)
+    }
+
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        (**self).outpoint_get_status(outpoint, script)
+    }
+
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
+        (**self).outpoint_pop(outpoint)
     }
 
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
@@ -405,6 +429,51 @@ pub trait ElectrumApi {
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>;
 
+    /// Subscribes to notifications for changes to the status of a transaction outpoint, i.e. to the
+    /// transactions creating and spending it, and returns its current status.
+    ///
+    /// `script` is the scriptPubKey of the outpoint, which some servers need to find it. The
+    /// subscription is kept even if the outpoint does not exist yet.
+    ///
+    /// Returns [`Error::AlreadySubscribedOutpoint`](../types/enum.Error.html#variant.AlreadySubscribedOutpoint)
+    /// if already subscribed to the outpoint.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error>;
+
+    /// Unsubscribes from notifications for a transaction outpoint.
+    ///
+    /// Returns whether the server still had the subscription, which it may drop on its own, e.g.
+    /// once the spending transaction is deeply confirmed.
+    ///
+    /// Returns [`Error::NotSubscribedOutpoint`](../types/enum.Error.html#variant.NotSubscribedOutpoint)
+    /// if not subscribed to the outpoint.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error>;
+
+    /// Returns the status of a transaction outpoint without subscribing to it.
+    ///
+    /// `script` is the scriptPubKey of the outpoint, which some servers need to find it.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error>;
+
+    /// Tries to pop one queued notification for the requested outpoint. Returns `None` if there
+    /// are no items in the queue.
+    ///
+    /// Returns [`Error::NotSubscribedOutpoint`](../types/enum.Error.html#variant.NotSubscribedOutpoint)
+    /// if not subscribed to the outpoint.
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error>;
+
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error>;
 
@@ -665,6 +734,33 @@ mod test {
             I: IntoIterator + Clone,
             I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
         {
+            unreachable!()
+        }
+
+        fn outpoint_subscribe(
+            &self,
+            _: &bitcoin::OutPoint,
+            _: &bitcoin::Script,
+        ) -> Result<super::OutpointStatus, super::Error> {
+            unreachable!()
+        }
+
+        fn outpoint_unsubscribe(&self, _: &bitcoin::OutPoint) -> Result<bool, super::Error> {
+            unreachable!()
+        }
+
+        fn outpoint_get_status(
+            &self,
+            _: &bitcoin::OutPoint,
+            _: &bitcoin::Script,
+        ) -> Result<super::OutpointStatus, super::Error> {
+            unreachable!()
+        }
+
+        fn outpoint_pop(
+            &self,
+            _: &bitcoin::OutPoint,
+        ) -> Result<Option<super::OutpointStatus>, super::Error> {
             unreachable!()
         }
 

@@ -13,7 +13,7 @@ use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{OutPoint, Script, Txid};
 
 use serde::{de, Deserialize, Serialize};
 
@@ -497,6 +497,30 @@ pub struct ScriptNotification {
     pub status: ScriptStatus,
 }
 
+/// Status of a transaction outpoint, as returned by
+/// [`outpoint_subscribe`](../client/struct.Client.html#method.outpoint_subscribe) and
+/// [`outpoint_get_status`](../client/struct.Client.html#method.outpoint_get_status) and sent in
+/// outpoint notifications.
+///
+/// Unconfirmed transactions have a height of `0` if all their inputs are confirmed, and `-1`
+/// otherwise. All fields are unset if the server knows no transaction funding the outpoint.
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct OutpointStatus {
+    /// Height of the transaction creating the outpoint, if it exists.
+    pub funder_height: Option<i32>,
+    /// Txid of the transaction spending the outpoint, if it exists.
+    pub spender_txhash: Option<Txid>,
+    /// Height of the transaction spending the outpoint. Set if and only if
+    /// [`spender_txhash`](#structfield.spender_txhash) is set.
+    pub spender_height: Option<i32>,
+}
+
+/// Notification of the new status of a transaction outpoint.
+#[derive(Deserialize)]
+pub(crate) struct OutpointNotification(pub Txid, pub u32, pub OutpointStatus);
+
 /// Errors
 #[derive(Debug)]
 pub enum Error {
@@ -514,6 +538,10 @@ pub enum Error {
     AlreadySubscribed(ScriptHash),
     /// Not subscribed to the notifications of an address
     NotSubscribed(ScriptHash),
+    /// Already subscribed to the notifications of a transaction outpoint
+    AlreadySubscribedOutpoint(OutPoint),
+    /// Not subscribed to the notifications of a transaction outpoint
+    NotSubscribedOutpoint(OutPoint),
     /// Error during the deserialization of a response from the server
     InvalidResponse(serde_json::Value),
     /// Generic error with a message
@@ -578,6 +606,8 @@ impl Display for Error {
             // TODO: Print out addresses once `ScriptHash` will implement `Display`
             Error::AlreadySubscribed(_) => write!(f, "Already subscribed to the notifications of an address"),
             Error::NotSubscribed(_) => write!(f, "Not subscribed to the notifications of an address"),
+            Error::AlreadySubscribedOutpoint(outpoint) => write!(f, "Already subscribed to the notifications of outpoint {}", outpoint),
+            Error::NotSubscribedOutpoint(outpoint) => write!(f, "Not subscribed to the notifications of outpoint {}", outpoint),
 
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
