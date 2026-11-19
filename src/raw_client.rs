@@ -1230,16 +1230,17 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
     fn script_unsubscribe(&self, script: &Script) -> Result<bool, Error> {
         let script_hash = script.to_electrum_scripthash();
-        let mut script_notifications = self.script_notifications.lock()?;
 
-        if !script_notifications.contains_key(&script_hash) {
+        if !self.script_notifications.lock()?.contains_key(&script_hash) {
             return Err(Error::NotSubscribed(script_hash));
         }
 
+        // The lock must not be held while waiting for the response: this thread may become the
+        // reader and have to queue a notification for this very script.
         let value = self.script_call(ScriptCall::Unsubscribe, script)?;
         let answer = serde_json::from_value(value)?;
 
-        script_notifications.remove(&script_hash);
+        self.script_notifications.lock()?.remove(&script_hash);
 
         Ok(answer)
     }
@@ -2037,6 +2038,41 @@ mod test {
             STATUS
         );
         assert!(client.script_pop(&script).unwrap().is_none());
+    }
+
+    #[test]
+    fn script_notification_racing_unsubscribe_does_not_deadlock() {
+        use crate::ToElectrumScriptHash;
+
+        let script = test_script(1);
+        let scripthash = script.to_electrum_scripthash().to_hex();
+        let responses = server_version_response(0, "1.7")
+            + r#"{"jsonrpc":"2.0","id":1,"result":null}"#
+            + "\n"
+            + &format!(
+                r#"{{"jsonrpc":"2.0","method":"blockchain.scriptpubkey.subscribe","params":["{scripthash}","{STATUS}"]}}"#
+            )
+            + "\n"
+            + r#"{"jsonrpc":"2.0","id":2,"result":true}"#
+            + "\n";
+        let client = RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap();
+        client.script_subscribe(&script).unwrap();
+
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(
+                client
+                    .script_unsubscribe(&script)
+                    .map_err(|e| e.to_string()),
+            );
+        });
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("unsubscribe must not deadlock on a racing notification");
+        assert_eq!(result, Ok(true));
     }
 
     fn test_outpoint() -> bitcoin::OutPoint {
