@@ -1462,6 +1462,22 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn transaction_test_mempool_accept_raw<Tx: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[Tx],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        let hex_txs = raw_txs
+            .iter()
+            .map(|tx| tx.as_ref().to_lower_hex_string())
+            .collect();
+        let result = self.internal_raw_call_with_vec(
+            "blockchain.transaction.testmempoolaccept",
+            vec![Param::StringVec(hex_txs)],
+        )?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         let params = vec![Param::String(format!("{:x}", txid)), Param::Usize(height)];
         let req = Request::new_id(
@@ -2161,6 +2177,40 @@ mod test {
     }
 
     #[test]
+    fn test_mempool_accept_sends_raw_txs_and_parses_results() {
+        use bitcoin::{Txid, Wtxid};
+        use std::str::FromStr;
+
+        let (client, stream) = mock_client(
+            "1.7",
+            &[&format!(
+                r#"[{{"txid":"{TXID_A}","wtxid":"{TXID_B}","allowed":false,"reason":"missing-inputs"}},{{"txid":"{TXID_B}","wtxid":"{TXID_A}"}}]"#
+            )],
+        );
+
+        let results = client
+            .transaction_test_mempool_accept_raw(&[vec![0x01, 0x02], vec![0xab]])
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].txid, Txid::from_str(TXID_A).unwrap());
+        assert_eq!(results[0].wtxid, Wtxid::from_str(TXID_B).unwrap());
+        assert_eq!(results[0].allowed, Some(false));
+        assert_eq!(results[0].reason.as_deref(), Some("missing-inputs"));
+        assert_eq!(
+            (results[1].allowed, results[1].reason.as_deref()),
+            (None, None)
+        );
+
+        let requests = stream.written_requests();
+        assert_eq!(
+            requests[1]["method"],
+            "blockchain.transaction.testmempoolaccept"
+        );
+        assert_eq!(requests[1]["params"], serde_json::json!([["0102", "ab"]]));
+    }
+
+    #[test]
     fn test_server_features_simple() {
         let client = get_test_client();
 
@@ -2649,6 +2699,28 @@ mod test {
             expected
         );
         assert!(client.outpoint_unsubscribe(&outpoint).unwrap());
+    }
+
+    #[test]
+    fn test_transaction_test_mempool_accept() {
+        use bitcoin::Txid;
+        use std::str::FromStr;
+
+        let client = get_test_client();
+
+        // A transaction confirmed long ago, whose inputs are spent.
+        let txid =
+            Txid::from_str("397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0")
+                .unwrap();
+        let tx = client.transaction_get(&txid).unwrap();
+
+        let results = client
+            .transaction_test_mempool_accept(std::slice::from_ref(&tx))
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].txid, txid);
+        assert_eq!(results[0].wtxid, tx.compute_wtxid());
+        assert_eq!(results[0].allowed, Some(false));
     }
 
     #[test]

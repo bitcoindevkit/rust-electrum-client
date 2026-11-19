@@ -13,7 +13,7 @@ use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{OutPoint, Script, Txid};
+use bitcoin::{OutPoint, Script, Txid, Wtxid};
 
 use serde::{de, Deserialize, Serialize};
 
@@ -455,6 +455,24 @@ pub struct BroadcastPackageRes {
     /// Only present if some transactions failed.
     #[serde(default)]
     pub errors: Vec<BroadcastPackageError>,
+}
+
+/// Result of the mempool acceptance test of one transaction, as returned by
+/// [`transaction_test_mempool_accept`](../client/struct.Client.html#method.transaction_test_mempool_accept).
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TestMempoolAcceptRes {
+    /// Txid of the transaction.
+    pub txid: Txid,
+    /// Wtxid of the transaction.
+    pub wtxid: Wtxid,
+    /// Whether the transaction would be accepted to the mempool. Unset if the transaction was not
+    /// fully validated because another transaction in the same request failed.
+    pub allowed: Option<bool>,
+    /// Human-readable reason for the rejection, without any guarantees on its contents. Only
+    /// meant for debugging.
+    pub reason: Option<String>,
 }
 
 /// Notification of a new block header

@@ -422,6 +422,14 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        impl_inner_call!(self, transaction_test_mempool_accept_raw, raw_txs)
+    }
+
+    #[inline]
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         impl_inner_call!(self, transaction_get_merkle, txid, height)
     }

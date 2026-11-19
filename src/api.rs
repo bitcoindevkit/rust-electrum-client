@@ -187,6 +187,13 @@ where
         (**self).transaction_broadcast_package_raw(raw_txs)
     }
 
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        (**self).transaction_test_mempool_accept_raw(raw_txs)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         (**self).transaction_get_merkle(txid, height)
     }
@@ -307,6 +314,23 @@ pub trait ElectrumApi {
     ) -> Result<BroadcastPackageRes, Error> {
         let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
         self.transaction_broadcast_package_raw(&raw_txs)
+    }
+
+    /// Tests whether transactions would be accepted to the server's mempool, without broadcasting
+    /// them. Returns one result per transaction, in the same order.
+    ///
+    /// Parents must come before their children. The transactions must not conflict with each
+    /// other or with the mempool, but do not need to be related.
+    ///
+    /// Note that this trusts the server not to broadcast the transactions.
+    ///
+    /// This method was added in protocol v1.7.
+    fn transaction_test_mempool_accept(
+        &self,
+        txs: &[Transaction],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
+        self.transaction_test_mempool_accept_raw(&raw_txs)
     }
 
     /// Executes the requested API call returning the raw answer.
@@ -516,6 +540,17 @@ pub trait ElectrumApi {
         &self,
         raw_txs: &[T],
     ) -> Result<BroadcastPackageRes, Error>;
+
+    /// Tests whether raw transactions would be accepted to the server's mempool, without
+    /// broadcasting them.
+    ///
+    /// See [`transaction_test_mempool_accept`](#method.transaction_test_mempool_accept).
+    ///
+    /// This method was added in protocol v1.7.
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error>;
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
@@ -800,6 +835,13 @@ mod test {
             &self,
             _: &[T],
         ) -> Result<super::BroadcastPackageRes, super::Error> {
+            unreachable!()
+        }
+
+        fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+            &self,
+            _: &[T],
+        ) -> Result<Vec<super::TestMempoolAcceptRes>, super::Error> {
             unreachable!()
         }
 
