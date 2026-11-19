@@ -176,6 +176,7 @@ impl ToElectrumScriptHash for Script {
 pub(crate) enum ScriptCall {
     GetBalance,
     GetHistory,
+    GetMempool,
     ListUnspent,
     Subscribe,
     Unsubscribe,
@@ -187,11 +188,13 @@ impl ScriptCall {
         let method = match (self, use_scriptpubkey) {
             (ScriptCall::GetBalance, false) => "blockchain.scripthash.get_balance",
             (ScriptCall::GetHistory, false) => "blockchain.scripthash.get_history",
+            (ScriptCall::GetMempool, false) => "blockchain.scripthash.get_mempool",
             (ScriptCall::ListUnspent, false) => "blockchain.scripthash.listunspent",
             (ScriptCall::Subscribe, false) => "blockchain.scripthash.subscribe",
             (ScriptCall::Unsubscribe, false) => "blockchain.scripthash.unsubscribe",
             (ScriptCall::GetBalance, true) => "blockchain.scriptpubkey.get_balance",
             (ScriptCall::GetHistory, true) => "blockchain.scriptpubkey.get_history",
+            (ScriptCall::GetMempool, true) => "blockchain.scriptpubkey.get_mempool",
             (ScriptCall::ListUnspent, true) => "blockchain.scriptpubkey.listunspent",
             (ScriptCall::Subscribe, true) => "blockchain.scriptpubkey.subscribe",
             (ScriptCall::Unsubscribe, true) => "blockchain.scriptpubkey.unsubscribe",
@@ -206,7 +209,7 @@ impl ScriptCall {
     }
 }
 
-/// History of a script, as a bare list (protocol v1.6 and older) or wrapped in a
+/// History or mempool transactions of a script, as a bare list (protocol v1.6 and older) or wrapped in a
 /// `{"history": [..]}` object (protocol v1.7).
 #[derive(Deserialize)]
 #[serde(untagged)]

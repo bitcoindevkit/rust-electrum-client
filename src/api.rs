@@ -97,6 +97,18 @@ where
         (**self).batch_script_get_history(scripts)
     }
 
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        (**self).script_get_mempool(script)
+    }
+
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_get_mempool(scripts)
+    }
+
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         (**self).script_list_unspent(script)
     }
@@ -364,6 +376,21 @@ pub trait ElectrumApi {
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>;
 
+    /// Returns the unconfirmed transactions of a *scriptPubKey*, in the order used to compute its
+    /// [`ScriptStatus`](../types/type.ScriptStatus.html).
+    ///
+    /// The `height` of each entry is `0` if all inputs of the transaction are confirmed, and `-1`
+    /// otherwise.
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error>;
+
+    /// Batch version of [`script_get_mempool`](#method.script_get_mempool).
+    ///
+    /// Takes a list of scripts and returns a list of mempool transaction lists.
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
+
     /// Returns the list of unspent outputs for a *scriptPubKey*
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error>;
 
@@ -595,6 +622,24 @@ mod test {
         }
 
         fn batch_script_get_history<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<Vec<super::GetHistoryRes>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
+        fn script_get_mempool(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Vec<super::GetHistoryRes>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_get_mempool<'s, I>(
             &self,
             _: I,
         ) -> Result<Vec<Vec<super::GetHistoryRes>>, super::Error>

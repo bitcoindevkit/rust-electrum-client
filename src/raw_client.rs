@@ -1243,6 +1243,20 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         impl_batch_call!(self, scripts, script_get_history, via ScriptHistoryResponse)
     }
 
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        let result = self.script_call(ScriptCall::GetMempool, script)?;
+
+        Ok(serde_json::from_value::<ScriptHistoryResponse>(result)?.into())
+    }
+
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        impl_batch_call!(self, scripts, script_get_mempool, via ScriptHistoryResponse)
+    }
+
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         let result = self.script_call(ScriptCall::ListUnspent, script)?;
         let mut result: Vec<ListUnspentRes> =
@@ -1745,6 +1759,7 @@ mod test {
             &[
                 r#"{"confirmed":100,"unconfirmed":-5}"#,
                 history,
+                history,
                 utxos,
                 &status,
                 "true",
@@ -1761,6 +1776,10 @@ mod test {
         assert_eq!(history[1].tx_hash, Txid::from_str(TXID_B).unwrap());
         assert_eq!((history[1].height, history[1].fee), (-1, Some(250)));
 
+        let mempool = client.script_get_mempool(&script).unwrap();
+        assert_eq!(mempool.len(), 2);
+        assert_eq!(mempool[1].tx_hash, Txid::from_str(TXID_B).unwrap());
+
         let utxos = client.script_list_unspent(&script).unwrap();
         assert_eq!(utxos.len(), 1);
         assert_eq!(utxos[0].tx_hash, Txid::from_str(TXID_A).unwrap());
@@ -1774,10 +1793,11 @@ mod test {
         assert!(client.script_unsubscribe(&script).unwrap());
 
         let requests = stream.written_requests();
-        assert_eq!(requests.len(), 6);
+        assert_eq!(requests.len(), 7);
         let suffixes = [
             "get_balance",
             "get_history",
+            "get_mempool",
             "listunspent",
             "subscribe",
             "unsubscribe",
@@ -1814,7 +1834,7 @@ mod test {
         let (client, stream) = mock_client(
             protocol_version,
             &[
-                balance, balance, history, history, utxos, utxos, &status, "null",
+                balance, balance, history, history, history, history, utxos, utxos, &status, "null",
             ],
         );
 
@@ -1824,6 +1844,8 @@ mod test {
         );
         let histories = client.batch_script_get_history(&script_refs).unwrap();
         assert_eq!(histories.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2]);
+        let mempools = client.batch_script_get_mempool(&script_refs).unwrap();
+        assert_eq!(mempools.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2]);
         let utxos = client.batch_script_list_unspent(&script_refs).unwrap();
         assert_eq!(utxos.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
         let statuses = client.batch_script_subscribe(&script_refs).unwrap();
@@ -1831,8 +1853,14 @@ mod test {
         assert!(statuses[1].is_none());
 
         let requests = stream.written_requests();
-        assert_eq!(requests.len(), 9);
-        let suffixes = ["get_balance", "get_history", "listunspent", "subscribe"];
+        assert_eq!(requests.len(), 11);
+        let suffixes = [
+            "get_balance",
+            "get_history",
+            "get_mempool",
+            "listunspent",
+            "subscribe",
+        ];
         for (pair, suffix) in requests[1..].chunks(2).zip(suffixes) {
             for (request, script) in pair.iter().zip(&scripts) {
                 assert_script_request(request, suffix, script, scriptpubkey);
@@ -2035,6 +2063,26 @@ mod test {
                 Txid::from_str("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
                     .unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn test_script_get_mempool() {
+        use std::str::FromStr;
+
+        for client in get_script_test_clients() {
+            // Mt.Gox hack address, which is unlikely to have unconfirmed transactions
+            let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+                .unwrap()
+                .assume_checked();
+            let script = addr.script_pubkey();
+
+            let mempool = client.script_get_mempool(&script).unwrap();
+            assert!(mempool.iter().all(|tx| tx.height <= 0));
+            let batch = client
+                .batch_script_get_mempool(vec![script.as_script()])
+                .unwrap();
+            assert_eq!(batch.len(), 1);
         }
     }
 

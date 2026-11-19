@@ -61,6 +61,11 @@ impl Batch {
         self.push_script_call(ScriptCall::GetHistory, script);
     }
 
+    /// Add one `get_mempool` request for `script` to the batch queue
+    pub fn script_get_mempool(&mut self, script: &Script) {
+        self.push_script_call(ScriptCall::GetMempool, script);
+    }
+
     /// Add one `get_balance` request for `script` to the batch queue
     pub fn script_get_balance(&mut self, script: &Script) {
         self.push_script_call(ScriptCall::GetBalance, script);

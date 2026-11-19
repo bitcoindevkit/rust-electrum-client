@@ -314,6 +314,20 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        impl_inner_call!(self, script_get_mempool, script)
+    }
+
+    #[inline]
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        impl_inner_call!(self, batch_script_get_mempool, scripts.clone())
+    }
+
+    #[inline]
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         impl_inner_call!(self, script_list_unspent, script)
     }
