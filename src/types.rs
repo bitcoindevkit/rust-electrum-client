@@ -648,6 +648,24 @@ impl Display for Error {
     }
 }
 
+impl Error {
+    /// JSON-RPC error code that servers use from protocol v1.7 on to refuse serving the history
+    /// of a script that has too many transactions.
+    const HISTORY_TOO_LARGE_CODE: i64 = 10001;
+
+    /// Returns whether the server refused a script request because the script's history is too
+    /// large.
+    ///
+    /// Servers signal this with a dedicated error code from protocol v1.7 on, so this always
+    /// returns `false` for older servers.
+    pub fn is_history_too_large(&self) -> bool {
+        match self {
+            Error::Protocol(error) => error["code"].as_i64() == Some(Self::HISTORY_TOO_LARGE_CODE),
+            _ => false,
+        }
+    }
+}
+
 impl std::error::Error for Error {}
 
 macro_rules! impl_error {
@@ -780,5 +798,23 @@ mod tests {
             serde_json::to_string(&req.redacted()).unwrap(),
             serde_json::to_string(&req).unwrap()
         );
+    }
+
+    #[test]
+    fn history_too_large_is_detected_by_error_code() {
+        use super::Error;
+
+        let too_large = Error::Protocol(serde_json::json!({
+            "code": 10001,
+            "message": "history too large",
+        }));
+        let other = Error::Protocol(serde_json::json!({
+            "code": -32601,
+            "message": "history too large",
+        }));
+
+        assert!(too_large.is_history_too_large());
+        assert!(!other.is_history_too_large());
+        assert!(!Error::Message("history too large".to_string()).is_history_too_large());
     }
 }
