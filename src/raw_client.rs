@@ -871,11 +871,15 @@ impl<S: Read + Write> RawClient<S> {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
                 let mut script_notifications = self.script_notifications.lock()?;
 
-                let queue = script_notifications
-                    .get_mut(&unserialized.scripthash)
-                    .ok_or(Error::NotSubscribed(unserialized.scripthash))?;
-
-                queue.push_back(unserialized.status);
+                // Servers may still deliver a notification that raced with an unsubscribe.
+                // Failing here would surface the error on whichever unrelated call is reading.
+                match script_notifications.get_mut(&unserialized.scripthash) {
+                    Some(queue) => queue.push_back(unserialized.status),
+                    None => warn!(
+                        "ignoring notification for unsubscribed scripthash {}",
+                        unserialized.scripthash.to_hex()
+                    ),
+                }
             }
             _ => info!("received unknown notification for method `{}`", method),
         }
@@ -1593,6 +1597,24 @@ mod test {
         let requests = stream_handle.written_requests();
         assert_eq!(requests.len(), 1);
         assert_server_version_request(&requests[0]);
+    }
+
+    #[test]
+    fn notification_for_unknown_scripthash_does_not_fail_pending_call() {
+        let unknown_scripthash = "11".repeat(32);
+        let status = "22".repeat(32);
+        let responses = server_version_response(0, "1.6")
+            + &format!(
+                r#"{{"jsonrpc":"2.0","method":"blockchain.scripthash.subscribe","params":["{unknown_scripthash}","{status}"]}}"#
+            )
+            + "\n"
+            + r#"{"jsonrpc":"2.0","id":1,"result":null}"#
+            + "\n";
+        let client = RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap();
+
+        client.ping().unwrap();
     }
 
     #[test]
