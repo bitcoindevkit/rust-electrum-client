@@ -1565,6 +1565,12 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         Ok(serde_json::from_value(result)?)
     }
 
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error> {
+        let result = self.internal_raw_call_with_vec("mempool.recent", vec![])?;
+
+        Ok(serde_json::from_value(result)?)
+    }
+
     fn ping(&self) -> Result<(), Error> {
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -2211,6 +2217,29 @@ mod test {
     }
 
     #[test]
+    fn mempool_recent_parses_results() {
+        use bitcoin::Txid;
+        use std::str::FromStr;
+
+        let (client, stream) = mock_client(
+            "1.7",
+            &[&format!(
+                r#"[{{"txid":"{TXID_A}","fee":18277,"vsize":2585}},{{"txid":"{TXID_B}","fee":877,"vsize":143}}]"#
+            )],
+        );
+
+        let recent = client.mempool_recent().unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].txid, Txid::from_str(TXID_A).unwrap());
+        assert_eq!((recent[0].fee, recent[0].vsize), (18277, 2585));
+        assert_eq!((recent[1].fee, recent[1].vsize), (877, 143));
+
+        let requests = stream.written_requests();
+        assert_eq!(requests[1]["method"], "mempool.recent");
+        assert_eq!(requests[1]["params"], serde_json::json!([]));
+    }
+
+    #[test]
     fn test_server_features_simple() {
         let client = get_test_client();
 
@@ -2235,6 +2264,15 @@ mod test {
         assert!(resp.mempoolminfee >= 0.0);
         assert!(resp.minrelaytxfee >= 0.0);
         assert!(resp.incrementalrelayfee >= 0.0);
+    }
+
+    #[test]
+    fn test_mempool_recent() {
+        let client = get_test_client();
+
+        let recent = client.mempool_recent().unwrap();
+        assert!(recent.len() <= 10);
+        assert!(recent.iter().all(|tx| tx.vsize > 0));
     }
 
     #[test]

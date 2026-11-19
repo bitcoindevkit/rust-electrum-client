@@ -233,6 +233,10 @@ where
         (**self).mempool_get_info()
     }
 
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error> {
+        (**self).mempool_recent()
+    }
+
     fn ping(&self) -> Result<(), Error> {
         (**self).ping()
     }
@@ -609,6 +613,12 @@ pub trait ElectrumApi {
     /// `minrelaytxfee` along with additional mempool fee information.
     fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error>;
 
+    /// Returns up to 10 transactions that recently entered the server's mempool, in arbitrary
+    /// order. Recency is best-effort.
+    ///
+    /// This method was added in protocol v1.7.
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error>;
+
     /// Pings the server. This method can also be used as a "dummy" call to trigger the processing
     /// of incoming block header or script notifications.
     fn ping(&self) -> Result<(), Error>;
@@ -881,6 +891,10 @@ mod test {
         }
 
         fn mempool_get_info(&self) -> Result<super::MempoolInfoRes, super::Error> {
+            unreachable!()
+        }
+
+        fn mempool_recent(&self) -> Result<Vec<super::MempoolRecentRes>, super::Error> {
             unreachable!()
         }
 

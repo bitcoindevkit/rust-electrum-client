@@ -480,6 +480,11 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error> {
+        impl_inner_call!(self, mempool_recent)
+    }
+
+    #[inline]
     fn ping(&self) -> Result<(), Error> {
         impl_inner_call!(self, ping)
     }

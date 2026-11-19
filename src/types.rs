@@ -371,6 +371,20 @@ pub struct MempoolInfoRes {
     pub incrementalrelayfee: f64,
 }
 
+/// A transaction recently added to the mempool, as returned by
+/// [`mempool_recent`](../client/struct.Client.html#method.mempool_recent).
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolRecentRes {
+    /// Txid of the transaction.
+    pub txid: Txid,
+    /// Fee paid by the transaction, in satoshis.
+    pub fee: u64,
+    /// Virtual size of the transaction, in vbytes.
+    pub vsize: u64,
+}
+
 /// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request (protocol v1.4, legacy format).
 ///
 /// In protocol v1.4, the headers are returned as a single concatenated hex string.
