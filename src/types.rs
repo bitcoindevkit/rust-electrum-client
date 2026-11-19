@@ -13,7 +13,7 @@ use bitcoin::blockdata::block;
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hashes::{sha256, Hash};
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{Script, Txid};
+use bitcoin::{OutPoint, Script, Txid, Wtxid};
 
 use serde::{de, Deserialize, Serialize};
 
@@ -168,6 +168,96 @@ impl ToElectrumScriptHash for Script {
     }
 }
 
+/// The script-related RPCs, whose wire format depends on the negotiated protocol version.
+///
+/// Up to protocol v1.6 they are `blockchain.scripthash.*` methods taking a [`ScriptHash`]; from
+/// v1.7 on they are `blockchain.scriptpubkey.*` methods taking the scriptPubKey itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptCall {
+    GetBalance,
+    GetHistory,
+    GetMempool,
+    ListUnspent,
+    Subscribe,
+    Unsubscribe,
+}
+
+impl ScriptCall {
+    /// Returns the method name and parameter to request this call for `script`.
+    pub(crate) fn request(self, script: &Script, use_scriptpubkey: bool) -> (&'static str, Param) {
+        let method = match (self, use_scriptpubkey) {
+            (ScriptCall::GetBalance, false) => "blockchain.scripthash.get_balance",
+            (ScriptCall::GetHistory, false) => "blockchain.scripthash.get_history",
+            (ScriptCall::GetMempool, false) => "blockchain.scripthash.get_mempool",
+            (ScriptCall::ListUnspent, false) => "blockchain.scripthash.listunspent",
+            (ScriptCall::Subscribe, false) => "blockchain.scripthash.subscribe",
+            (ScriptCall::Unsubscribe, false) => "blockchain.scripthash.unsubscribe",
+            (ScriptCall::GetBalance, true) => "blockchain.scriptpubkey.get_balance",
+            (ScriptCall::GetHistory, true) => "blockchain.scriptpubkey.get_history",
+            (ScriptCall::GetMempool, true) => "blockchain.scriptpubkey.get_mempool",
+            (ScriptCall::ListUnspent, true) => "blockchain.scriptpubkey.listunspent",
+            (ScriptCall::Subscribe, true) => "blockchain.scriptpubkey.subscribe",
+            (ScriptCall::Unsubscribe, true) => "blockchain.scriptpubkey.unsubscribe",
+        };
+        let param = if use_scriptpubkey {
+            script.as_bytes().to_lower_hex_string()
+        } else {
+            script.to_electrum_scripthash().to_hex()
+        };
+
+        (method, Param::String(param))
+    }
+}
+
+/// Parameters of the `blockchain.outpoint.*` calls, with `spk_hint` as the last one if given.
+pub(crate) fn outpoint_params(outpoint: &OutPoint, spk_hint: Option<&Script>) -> Vec<Param> {
+    let mut params = vec![
+        Param::String(outpoint.txid.to_string()),
+        Param::U32(outpoint.vout),
+    ];
+    if let Some(script) = spk_hint {
+        params.push(Param::String(script.as_bytes().to_lower_hex_string()));
+    }
+
+    params
+}
+
+/// History or mempool transactions of a script, as a bare list (protocol v1.6 and older) or wrapped in a
+/// `{"history": [..]}` object (protocol v1.7).
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ScriptHistoryResponse {
+    Wrapped { history: Vec<GetHistoryRes> },
+    Bare(Vec<GetHistoryRes>),
+}
+
+impl From<ScriptHistoryResponse> for Vec<GetHistoryRes> {
+    fn from(response: ScriptHistoryResponse) -> Self {
+        match response {
+            ScriptHistoryResponse::Wrapped { history } | ScriptHistoryResponse::Bare(history) => {
+                history
+            }
+        }
+    }
+}
+
+/// Unspent outputs of a script, as a bare list (protocol v1.6 and older) or wrapped in a
+/// `{"utxos": [..]}` object (protocol v1.7).
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ScriptUtxosResponse {
+    Wrapped { utxos: Vec<ListUnspentRes> },
+    Bare(Vec<ListUnspentRes>),
+}
+
+impl From<ScriptUtxosResponse> for Vec<ListUnspentRes> {
+    fn from(response: ScriptUtxosResponse) -> Self {
+        match response {
+            ScriptUtxosResponse::Wrapped { utxos } | ScriptUtxosResponse::Bare(utxos) => utxos,
+        }
+    }
+}
+
 fn from_hex<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: FromHex,
@@ -250,6 +340,8 @@ pub struct ServerFeaturesRes {
     /// Maximum supported version of the protocol.
     pub protocol_max: String,
     /// Hash function used to create the [`ScriptHash`](type.ScriptHash.html).
+    ///
+    /// Not reported by servers from protocol v1.7 on.
     pub hash_function: Option<String>,
     /// Pruned height of the server.
     pub pruning: Option<i64>,
@@ -290,6 +382,20 @@ pub struct MempoolInfoRes {
     /// Static operator-configurable minimum fee rate increment for mempool limiting or
     /// replacement, in BTC/kvB.
     pub incrementalrelayfee: f64,
+}
+
+/// A transaction recently added to the mempool, as returned by
+/// [`mempool_recent`](../client/struct.Client.html#method.mempool_recent).
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MempoolRecentRes {
+    /// Txid of the transaction.
+    pub txid: Txid,
+    /// Fee paid by the transaction, in satoshis.
+    pub fee: u64,
+    /// Virtual size of the transaction, in vbytes.
+    pub vsize: u64,
 }
 
 /// Response to a [`block_headers`](../client/struct.Client.html#method.block_headers) request (protocol v1.4, legacy format).
@@ -378,6 +484,24 @@ pub struct BroadcastPackageRes {
     pub errors: Vec<BroadcastPackageError>,
 }
 
+/// Result of the mempool acceptance test of one transaction, as returned by
+/// [`transaction_test_mempool_accept`](../client/struct.Client.html#method.transaction_test_mempool_accept).
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TestMempoolAcceptRes {
+    /// Txid of the transaction.
+    pub txid: Txid,
+    /// Wtxid of the transaction.
+    pub wtxid: Wtxid,
+    /// Whether the transaction would be accepted to the mempool. Unset if the transaction was not
+    /// fully validated because another transaction in the same request failed.
+    pub allowed: Option<bool>,
+    /// Human-readable reason for the rejection, without any guarantees on its contents. Only
+    /// meant for debugging.
+    pub reason: Option<String>,
+}
+
 /// Notification of a new block header
 #[derive(Clone, Debug, Deserialize)]
 pub struct HeaderNotification {
@@ -418,6 +542,30 @@ pub struct ScriptNotification {
     pub status: ScriptStatus,
 }
 
+/// Status of a transaction outpoint, as returned by
+/// [`outpoint_subscribe`](../client/struct.Client.html#method.outpoint_subscribe) and
+/// [`outpoint_get_status`](../client/struct.Client.html#method.outpoint_get_status) and sent in
+/// outpoint notifications.
+///
+/// Unconfirmed transactions have a height of `0` if all their inputs are confirmed, and `-1`
+/// otherwise. All fields are unset if the server knows no transaction funding the outpoint.
+///
+/// This was added in protocol v1.7.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct OutpointStatus {
+    /// Height of the transaction creating the outpoint, if it exists.
+    pub funder_height: Option<i32>,
+    /// Txid of the transaction spending the outpoint, if it exists.
+    pub spender_txhash: Option<Txid>,
+    /// Height of the transaction spending the outpoint. Set if and only if
+    /// [`spender_txhash`](#structfield.spender_txhash) is set.
+    pub spender_height: Option<i32>,
+}
+
+/// Notification of the new status of a transaction outpoint.
+#[derive(Deserialize)]
+pub(crate) struct OutpointNotification(pub Txid, pub u32, pub OutpointStatus);
+
 /// Errors
 #[derive(Debug)]
 pub enum Error {
@@ -435,6 +583,10 @@ pub enum Error {
     AlreadySubscribed(ScriptHash),
     /// Not subscribed to the notifications of an address
     NotSubscribed(ScriptHash),
+    /// Already subscribed to the notifications of a transaction outpoint
+    AlreadySubscribedOutpoint(OutPoint),
+    /// Not subscribed to the notifications of a transaction outpoint
+    NotSubscribedOutpoint(OutPoint),
     /// Error during the deserialization of a response from the server
     InvalidResponse(serde_json::Value),
     /// Generic error with a message
@@ -499,10 +651,30 @@ impl Display for Error {
             // TODO: Print out addresses once `ScriptHash` will implement `Display`
             Error::AlreadySubscribed(_) => write!(f, "Already subscribed to the notifications of an address"),
             Error::NotSubscribed(_) => write!(f, "Not subscribed to the notifications of an address"),
+            Error::AlreadySubscribedOutpoint(outpoint) => write!(f, "Already subscribed to the notifications of outpoint {}", outpoint),
+            Error::NotSubscribedOutpoint(outpoint) => write!(f, "Not subscribed to the notifications of outpoint {}", outpoint),
 
             Error::MissingDomain => f.write_str("Missing domain while it was explicitly asked to validate it"),
             Error::CouldntLockReader => f.write_str("Couldn't take a lock on the reader mutex. This means that there's already another reader thread is running"),
             Error::Mpsc => f.write_str("Broken IPC communication channel: the other thread probably has exited"),
+        }
+    }
+}
+
+impl Error {
+    /// JSON-RPC error code that servers use from protocol v1.7 on to refuse serving the history
+    /// of a script that has too many transactions.
+    const HISTORY_TOO_LARGE_CODE: i64 = 10001;
+
+    /// Returns whether the server refused a script request because the script's history is too
+    /// large.
+    ///
+    /// Servers signal this with a dedicated error code from protocol v1.7 on, so this always
+    /// returns `false` for older servers.
+    pub fn is_history_too_large(&self) -> bool {
+        match self {
+            Error::Protocol(error) => error["code"].as_i64() == Some(Self::HISTORY_TOO_LARGE_CODE),
+            _ => false,
         }
     }
 }
@@ -639,5 +811,23 @@ mod tests {
             serde_json::to_string(&req.redacted()).unwrap(),
             serde_json::to_string(&req).unwrap()
         );
+    }
+
+    #[test]
+    fn history_too_large_is_detected_by_error_code() {
+        use super::Error;
+
+        let too_large = Error::Protocol(serde_json::json!({
+            "code": 10001,
+            "message": "history too large",
+        }));
+        let other = Error::Protocol(serde_json::json!({
+            "code": -32601,
+            "message": "history too large",
+        }));
+
+        assert!(too_large.is_history_too_large());
+        assert!(!other.is_history_too_large());
+        assert!(!Error::Message("history too large".to_string()).is_history_too_large());
     }
 }

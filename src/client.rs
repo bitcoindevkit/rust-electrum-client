@@ -6,7 +6,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{Script, Txid};
+use bitcoin::{OutPoint, Script, ScriptBuf, Txid};
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
@@ -55,7 +55,7 @@ macro_rules! impl_inner_call {
             drop(read_client);
             match res {
                 Ok(val) => return Ok(val),
-                Err(Error::Protocol(_) | Error::AlreadySubscribed(_)) => {
+                Err(ref e) if !is_retryable(e) => {
                     return res;
                 },
                 Err(e) => {
@@ -101,6 +101,19 @@ macro_rules! impl_inner_call {
             }
         }}
     }
+}
+
+/// Whether a failed call may succeed on a new connection. Errors returned by the server or
+/// caused by the client's own subscription bookkeeping would just recur.
+fn is_retryable(error: &Error) -> bool {
+    !matches!(
+        error,
+        Error::Protocol(_)
+            | Error::AlreadySubscribed(_)
+            | Error::NotSubscribed(_)
+            | Error::AlreadySubscribedOutpoint(_)
+            | Error::NotSubscribedOutpoint(_)
+    )
 }
 
 fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
@@ -314,6 +327,20 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        impl_inner_call!(self, script_get_mempool, script)
+    }
+
+    #[inline]
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        impl_inner_call!(self, batch_script_get_mempool, scripts.clone())
+    }
+
+    #[inline]
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         impl_inner_call!(self, script_list_unspent, script)
     }
@@ -328,6 +355,43 @@ impl ElectrumApi for Client {
         I::Item: Borrow<&'s Script>,
     {
         impl_inner_call!(self, batch_script_list_unspent, scripts.clone())
+    }
+
+    #[inline]
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        impl_inner_call!(self, outpoint_subscribe, outpoint, script)
+    }
+
+    #[inline]
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error> {
+        impl_inner_call!(self, outpoint_unsubscribe, outpoint)
+    }
+
+    #[inline]
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        impl_inner_call!(self, outpoint_get_status, outpoint, script)
+    }
+
+    #[inline]
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>,
+    {
+        impl_inner_call!(self, batch_outpoint_get_status, outpoints.clone())
+    }
+
+    #[inline]
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
+        impl_inner_call!(self, outpoint_pop, outpoint)
     }
 
     #[inline]
@@ -373,6 +437,14 @@ impl ElectrumApi for Client {
         raw_txs: &[T],
     ) -> Result<BroadcastPackageRes, Error> {
         impl_inner_call!(self, transaction_broadcast_package_raw, raw_txs)
+    }
+
+    #[inline]
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        impl_inner_call!(self, transaction_test_mempool_accept_raw, raw_txs)
     }
 
     #[inline]
@@ -426,6 +498,11 @@ impl ElectrumApi for Client {
     }
 
     #[inline]
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error> {
+        impl_inner_call!(self, mempool_recent)
+    }
+
+    #[inline]
     fn ping(&self) -> Result<(), Error> {
         impl_inner_call!(self, ping)
     }
@@ -439,6 +516,24 @@ impl ElectrumApi for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscription_bookkeeping_errors_are_not_retried() {
+        use bitcoin::hashes::Hash;
+        use bitcoin::{OutPoint, Txid};
+
+        let scripthash = ScriptHash::from([0; 32]);
+        let outpoint = OutPoint::new(Txid::all_zeros(), 0);
+
+        assert!(!is_retryable(&Error::Protocol(serde_json::Value::Null)));
+        assert!(!is_retryable(&Error::AlreadySubscribed(scripthash)));
+        assert!(!is_retryable(&Error::NotSubscribed(scripthash)));
+        assert!(!is_retryable(&Error::AlreadySubscribedOutpoint(outpoint)));
+        assert!(!is_retryable(&Error::NotSubscribedOutpoint(outpoint)));
+        assert!(is_retryable(&Error::IOError(
+            std::io::ErrorKind::BrokenPipe.into()
+        )));
+    }
 
     #[test]
     fn more_failed_attempts_than_retries_means_exhausted() {

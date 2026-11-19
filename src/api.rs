@@ -7,7 +7,7 @@ use std::convert::TryInto;
 use std::ops::Deref;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{block, Script, Transaction, Txid};
+use bitcoin::{block, OutPoint, Script, ScriptBuf, Transaction, Txid};
 
 use crate::batch::Batch;
 use crate::raw_client::{CLIENT_NAME, PROTOCOL_VERSION_MAX, PROTOCOL_VERSION_MIN};
@@ -97,6 +97,18 @@ where
         (**self).batch_script_get_history(scripts)
     }
 
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
+        (**self).script_get_mempool(script)
+    }
+
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>,
+    {
+        (**self).batch_script_get_mempool(scripts)
+    }
+
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
         (**self).script_list_unspent(script)
     }
@@ -110,6 +122,38 @@ where
         I::Item: Borrow<&'s Script>,
     {
         (**self).batch_script_list_unspent(scripts)
+    }
+
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        (**self).outpoint_subscribe(outpoint, script)
+    }
+
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error> {
+        (**self).outpoint_unsubscribe(outpoint)
+    }
+
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error> {
+        (**self).outpoint_get_status(outpoint, script)
+    }
+
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>,
+    {
+        (**self).batch_outpoint_get_status(outpoints)
+    }
+
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
+        (**self).outpoint_pop(outpoint)
     }
 
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
@@ -151,6 +195,13 @@ where
         (**self).transaction_broadcast_package_raw(raw_txs)
     }
 
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        (**self).transaction_test_mempool_accept_raw(raw_txs)
+    }
+
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error> {
         (**self).transaction_get_merkle(txid, height)
     }
@@ -188,6 +239,10 @@ where
 
     fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error> {
         (**self).mempool_get_info()
+    }
+
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error> {
+        (**self).mempool_recent()
     }
 
     fn ping(&self) -> Result<(), Error> {
@@ -271,6 +326,23 @@ pub trait ElectrumApi {
     ) -> Result<BroadcastPackageRes, Error> {
         let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
         self.transaction_broadcast_package_raw(&raw_txs)
+    }
+
+    /// Tests whether transactions would be accepted to the server's mempool, without broadcasting
+    /// them. Returns one result per transaction, in the same order.
+    ///
+    /// Parents must come before their children. The transactions must not conflict with each
+    /// other or with the mempool, but do not need to be related.
+    ///
+    /// Note that this trusts the server not to broadcast the transactions.
+    ///
+    /// This method was added in protocol v1.7.
+    fn transaction_test_mempool_accept(
+        &self,
+        txs: &[Transaction],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error> {
+        let raw_txs: Vec<Vec<u8>> = txs.iter().map(serialize).collect();
+        self.transaction_test_mempool_accept_raw(&raw_txs)
     }
 
     /// Executes the requested API call returning the raw answer.
@@ -364,6 +436,21 @@ pub trait ElectrumApi {
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>;
 
+    /// Returns the unconfirmed transactions of a *scriptPubKey*, in the order used to compute its
+    /// [`ScriptStatus`](../types/type.ScriptStatus.html).
+    ///
+    /// The `height` of each entry is `0` if all inputs of the transaction are confirmed, and `-1`
+    /// otherwise.
+    fn script_get_mempool(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error>;
+
+    /// Batch version of [`script_get_mempool`](#method.script_get_mempool).
+    ///
+    /// Takes a list of scripts and returns a list of mempool transaction lists.
+    fn batch_script_get_mempool<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<&'s Script>;
+
     /// Returns the list of unspent outputs for a *scriptPubKey*
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error>;
 
@@ -377,6 +464,62 @@ pub trait ElectrumApi {
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>;
+
+    /// Subscribes to notifications for changes to the status of a transaction outpoint, i.e. to the
+    /// transactions creating and spending it, and returns its current status.
+    ///
+    /// `script` is the scriptPubKey of the outpoint, which some servers need to find it. The
+    /// subscription is kept even if the outpoint does not exist yet.
+    ///
+    /// Returns [`Error::AlreadySubscribedOutpoint`](../types/enum.Error.html#variant.AlreadySubscribedOutpoint)
+    /// if already subscribed to the outpoint.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_subscribe(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error>;
+
+    /// Unsubscribes from notifications for a transaction outpoint.
+    ///
+    /// Returns whether the server still had the subscription, which it may drop on its own, e.g.
+    /// once the spending transaction is deeply confirmed.
+    ///
+    /// Returns [`Error::NotSubscribedOutpoint`](../types/enum.Error.html#variant.NotSubscribedOutpoint)
+    /// if not subscribed to the outpoint.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_unsubscribe(&self, outpoint: &OutPoint) -> Result<bool, Error>;
+
+    /// Returns the status of a transaction outpoint without subscribing to it.
+    ///
+    /// `script` is the scriptPubKey of the outpoint, which some servers need to find it.
+    ///
+    /// This method was added in protocol v1.7.
+    fn outpoint_get_status(
+        &self,
+        outpoint: &OutPoint,
+        script: &Script,
+    ) -> Result<OutpointStatus, Error>;
+
+    /// Batch version of [`outpoint_get_status`](#method.outpoint_get_status).
+    ///
+    /// Takes a list of outpoints, each with its scriptPubKey, and returns their statuses in the
+    /// same order.
+    ///
+    /// This method was added in protocol v1.7.
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>;
+
+    /// Tries to pop one queued notification for the requested outpoint. Returns `None` if there
+    /// are no items in the queue.
+    ///
+    /// Returns [`Error::NotSubscribedOutpoint`](../types/enum.Error.html#variant.NotSubscribedOutpoint)
+    /// if not subscribed to the outpoint.
+    fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error>;
 
     /// Gets the raw bytes of a transaction with `txid`. Returns an error if not found.
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error>;
@@ -420,6 +563,17 @@ pub trait ElectrumApi {
         &self,
         raw_txs: &[T],
     ) -> Result<BroadcastPackageRes, Error>;
+
+    /// Tests whether raw transactions would be accepted to the server's mempool, without
+    /// broadcasting them.
+    ///
+    /// See [`transaction_test_mempool_accept`](#method.transaction_test_mempool_accept).
+    ///
+    /// This method was added in protocol v1.7.
+    fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+        &self,
+        raw_txs: &[T],
+    ) -> Result<Vec<TestMempoolAcceptRes>, Error>;
 
     /// Returns the merkle path for the transaction `txid` confirmed in the block at `height`.
     fn transaction_get_merkle(&self, txid: &Txid, height: usize) -> Result<GetMerkleRes, Error>;
@@ -477,6 +631,12 @@ pub trait ElectrumApi {
     /// This method was added in protocol v1.6 and replaces `relay_fee` by providing
     /// `minrelaytxfee` along with additional mempool fee information.
     fn mempool_get_info(&self) -> Result<MempoolInfoRes, Error>;
+
+    /// Returns up to 10 transactions that recently entered the server's mempool, in arbitrary
+    /// order. Recency is best-effort.
+    ///
+    /// This method was added in protocol v1.7.
+    fn mempool_recent(&self) -> Result<Vec<MempoolRecentRes>, Error>;
 
     /// Pings the server. This method can also be used as a "dummy" call to trigger the processing
     /// of incoming block header or script notifications.
@@ -605,6 +765,24 @@ mod test {
             unreachable!()
         }
 
+        fn script_get_mempool(
+            &self,
+            _: &bitcoin::Script,
+        ) -> Result<Vec<super::GetHistoryRes>, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_script_get_mempool<'s, I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<Vec<super::GetHistoryRes>>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
+        {
+            unreachable!()
+        }
+
         fn script_list_unspent(
             &self,
             _: &bitcoin::Script,
@@ -620,6 +798,44 @@ mod test {
             I: IntoIterator + Clone,
             I::Item: std::borrow::Borrow<&'s bitcoin::Script>,
         {
+            unreachable!()
+        }
+
+        fn outpoint_subscribe(
+            &self,
+            _: &bitcoin::OutPoint,
+            _: &bitcoin::Script,
+        ) -> Result<super::OutpointStatus, super::Error> {
+            unreachable!()
+        }
+
+        fn outpoint_unsubscribe(&self, _: &bitcoin::OutPoint) -> Result<bool, super::Error> {
+            unreachable!()
+        }
+
+        fn outpoint_get_status(
+            &self,
+            _: &bitcoin::OutPoint,
+            _: &bitcoin::Script,
+        ) -> Result<super::OutpointStatus, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_outpoint_get_status<I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<super::OutpointStatus>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<(bitcoin::OutPoint, bitcoin::ScriptBuf)>,
+        {
+            unreachable!()
+        }
+
+        fn outpoint_pop(
+            &self,
+            _: &bitcoin::OutPoint,
+        ) -> Result<Option<super::OutpointStatus>, super::Error> {
             unreachable!()
         }
 
@@ -662,6 +878,13 @@ mod test {
             unreachable!()
         }
 
+        fn transaction_test_mempool_accept_raw<T: AsRef<[u8]>>(
+            &self,
+            _: &[T],
+        ) -> Result<Vec<super::TestMempoolAcceptRes>, super::Error> {
+            unreachable!()
+        }
+
         fn transaction_get_merkle(
             &self,
             _: &bitcoin::Txid,
@@ -698,6 +921,10 @@ mod test {
         }
 
         fn mempool_get_info(&self) -> Result<super::MempoolInfoRes, super::Error> {
+            unreachable!()
+        }
+
+        fn mempool_recent(&self) -> Result<Vec<super::MempoolRecentRes>, super::Error> {
             unreachable!()
         }
 
