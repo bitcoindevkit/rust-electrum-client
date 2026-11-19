@@ -168,6 +168,80 @@ impl ToElectrumScriptHash for Script {
     }
 }
 
+/// The script-related RPCs, whose wire format depends on the negotiated protocol version.
+///
+/// Up to protocol v1.6 they are `blockchain.scripthash.*` methods taking a [`ScriptHash`]; from
+/// v1.7 on they are `blockchain.scriptpubkey.*` methods taking the scriptPubKey itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptCall {
+    GetBalance,
+    GetHistory,
+    ListUnspent,
+    Subscribe,
+    Unsubscribe,
+}
+
+impl ScriptCall {
+    /// Returns the method name and parameter to request this call for `script`.
+    pub(crate) fn request(self, script: &Script, use_scriptpubkey: bool) -> (&'static str, Param) {
+        let method = match (self, use_scriptpubkey) {
+            (ScriptCall::GetBalance, false) => "blockchain.scripthash.get_balance",
+            (ScriptCall::GetHistory, false) => "blockchain.scripthash.get_history",
+            (ScriptCall::ListUnspent, false) => "blockchain.scripthash.listunspent",
+            (ScriptCall::Subscribe, false) => "blockchain.scripthash.subscribe",
+            (ScriptCall::Unsubscribe, false) => "blockchain.scripthash.unsubscribe",
+            (ScriptCall::GetBalance, true) => "blockchain.scriptpubkey.get_balance",
+            (ScriptCall::GetHistory, true) => "blockchain.scriptpubkey.get_history",
+            (ScriptCall::ListUnspent, true) => "blockchain.scriptpubkey.listunspent",
+            (ScriptCall::Subscribe, true) => "blockchain.scriptpubkey.subscribe",
+            (ScriptCall::Unsubscribe, true) => "blockchain.scriptpubkey.unsubscribe",
+        };
+        let param = if use_scriptpubkey {
+            script.as_bytes().to_lower_hex_string()
+        } else {
+            script.to_electrum_scripthash().to_hex()
+        };
+
+        (method, Param::String(param))
+    }
+}
+
+/// History of a script, as a bare list (protocol v1.6 and older) or wrapped in a
+/// `{"history": [..]}` object (protocol v1.7).
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ScriptHistoryResponse {
+    Wrapped { history: Vec<GetHistoryRes> },
+    Bare(Vec<GetHistoryRes>),
+}
+
+impl From<ScriptHistoryResponse> for Vec<GetHistoryRes> {
+    fn from(response: ScriptHistoryResponse) -> Self {
+        match response {
+            ScriptHistoryResponse::Wrapped { history } | ScriptHistoryResponse::Bare(history) => {
+                history
+            }
+        }
+    }
+}
+
+/// Unspent outputs of a script, as a bare list (protocol v1.6 and older) or wrapped in a
+/// `{"utxos": [..]}` object (protocol v1.7).
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ScriptUtxosResponse {
+    Wrapped { utxos: Vec<ListUnspentRes> },
+    Bare(Vec<ListUnspentRes>),
+}
+
+impl From<ScriptUtxosResponse> for Vec<ListUnspentRes> {
+    fn from(response: ScriptUtxosResponse) -> Self {
+        match response {
+            ScriptUtxosResponse::Wrapped { utxos } | ScriptUtxosResponse::Bare(utxos) => utxos,
+        }
+    }
+}
+
 fn from_hex<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     T: FromHex,

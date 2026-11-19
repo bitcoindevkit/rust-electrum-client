@@ -58,6 +58,22 @@ fn is_protocol_version_at_least(version: &str, major: u32, minor: u32) -> bool {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Lets tests negotiate a different maximum protocol version than [`PROTOCOL_VERSION_MAX`].
+    static TEST_PROTOCOL_VERSION_MAX: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn protocol_version_max() -> &'static str {
+    #[cfg(test)]
+    if let Some(max) = TEST_PROTOCOL_VERSION_MAX.with(|max| max.get()) {
+        return max;
+    }
+
+    PROTOCOL_VERSION_MAX
+}
+
 macro_rules! impl_batch_call {
     ( $self:expr, $data:expr, $call:ident ) => {{
         impl_batch_call!($self, $data, $call, )
@@ -65,6 +81,23 @@ macro_rules! impl_batch_call {
 
     ( $self:expr, $data:expr, $call:ident, apply_deref ) => {{
         impl_batch_call!($self, $data, $call, *)
+    }};
+
+    // Deserializes each result as `$response` and converts it into the returned element type.
+    ( $self:expr, $data:expr, $call:ident, via $response:ty ) => {{
+        let mut batch = Batch::default();
+        for i in $data {
+            batch.$call(i.borrow());
+        }
+
+        let resp = $self.batch_call(&batch)?;
+        let mut answer = Vec::new();
+
+        for x in resp {
+            answer.push(serde_json::from_value::<$response>(x)?.into());
+        }
+
+        Ok(answer)
     }};
 
     ( $self:expr, $data:expr, $call:ident, $($apply_deref:tt)? ) => {{
@@ -648,7 +681,7 @@ impl<S: Read + Write> RawClient<S> {
     fn request_server_version(&self) -> Result<ServerVersionRes, Error> {
         let version_range = vec![
             PROTOCOL_VERSION_MIN.to_string(),
-            PROTOCOL_VERSION_MAX.to_string(),
+            protocol_version_max().to_string(),
         ];
         let req = Request::new_id(
             self.last_id.fetch_add(1, Ordering::SeqCst),
@@ -667,6 +700,31 @@ impl<S: Read + Write> RawClient<S> {
         *self.protocol_version.lock()? = Some(protocol_version.clone());
 
         Ok(protocol_version)
+    }
+
+    /// Whether the negotiated protocol version is at least `major.minor`. Returns `false` if no
+    /// version was negotiated yet.
+    fn negotiated_at_least(&self, major: u32, minor: u32) -> Result<bool, Error> {
+        Ok(self
+            .protocol_version
+            .lock()?
+            .as_deref()
+            .is_some_and(|version| is_protocol_version_at_least(version, major, minor)))
+    }
+
+    /// Whether script calls use the `blockchain.scriptpubkey.*` methods of protocol v1.7.
+    fn uses_scriptpubkey_methods(&self) -> Result<bool, Error> {
+        self.negotiated_at_least(1, 7)
+    }
+
+    fn script_call(
+        &self,
+        script_call: ScriptCall,
+        script: &Script,
+    ) -> Result<serde_json::Value, Error> {
+        let (method, param) = script_call.request(script, self.uses_scriptpubkey_methods()?);
+
+        self.internal_raw_call_with_vec(method, vec![param])
     }
 
     fn _reader_thread(&self, until_message: Option<usize>) -> Result<serde_json::Value, Error> {
@@ -867,7 +925,8 @@ impl<S: Read + Write> RawClient<S> {
                     .into_iter()
                     .collect(),
             ),
-            "blockchain.scripthash.subscribe" => {
+            // Both carry the scripthash, also in protocol v1.7.
+            "blockchain.scripthash.subscribe" | "blockchain.scriptpubkey.subscribe" => {
                 let unserialized: ScriptNotification = serde_json::from_value(result)?;
                 let mut script_notifications = self.script_notifications.lock()?;
 
@@ -925,12 +984,10 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
 
         // Add our listener to the map before we send the request
 
-        for (idx, (method, params)) in batch.iter().enumerate() {
-            let mut req = Request::new_id(
-                self.last_id.fetch_add(1, Ordering::SeqCst),
-                method,
-                params.to_vec(),
-            );
+        let use_scriptpubkey = self.uses_scriptpubkey_methods()?;
+        for (idx, (method, params)) in batch.resolved_calls(use_scriptpubkey).enumerate() {
+            let mut req =
+                Request::new_id(self.last_id.fetch_add(1, Ordering::SeqCst), method, params);
 
             // Although the library DOES NOT use JSON-RPC batch arrays,
             // It applies the `authorization` ONLY in the first `Request` of the `Batch`.
@@ -1044,16 +1101,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         );
         let result = self.call(req)?;
 
-        // Check protocol version to determine response format
-        let is_v1_6_or_later = {
-            let protocol_version = self.protocol_version.lock()?;
-            protocol_version
-                .as_ref()
-                .map(|v| is_protocol_version_at_least(v, 1, 6))
-                .unwrap_or(false)
-        };
-
-        if is_v1_6_or_later {
+        if self.negotiated_at_least(1, 6)? {
             // v1.6+: headers field contains array of hex strings
             let mut deserialized: GetHeadersRes = serde_json::from_value(result)?;
             for header_hex in &deserialized.header_hexes {
@@ -1120,12 +1168,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         script_notifications.insert(script_hash, VecDeque::new());
         drop(script_notifications);
 
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            "blockchain.scripthash.subscribe",
-            vec![Param::String(script_hash.to_hex())],
-        );
-        let value = self.call(req)?;
+        let value = self.script_call(ScriptCall::Subscribe, script)?;
 
         Ok(serde_json::from_value(value)?)
     }
@@ -1157,12 +1200,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
             return Err(Error::NotSubscribed(script_hash));
         }
 
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            "blockchain.scripthash.unsubscribe",
-            vec![Param::String(script_hash.to_hex())],
-        );
-        let value = self.call(req)?;
+        let value = self.script_call(ScriptCall::Unsubscribe, script)?;
         let answer = serde_json::from_value(value)?;
 
         script_notifications.remove(&script_hash);
@@ -1180,13 +1218,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn script_get_balance(&self, script: &Script) -> Result<GetBalanceRes, Error> {
-        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            "blockchain.scripthash.get_balance",
-            params,
-        );
-        let result = self.call(req)?;
+        let result = self.script_call(ScriptCall::GetBalance, script)?;
 
         Ok(serde_json::from_value(result)?)
     }
@@ -1199,33 +1231,22 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
     }
 
     fn script_get_history(&self, script: &Script) -> Result<Vec<GetHistoryRes>, Error> {
-        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            "blockchain.scripthash.get_history",
-            params,
-        );
-        let result = self.call(req)?;
+        let result = self.script_call(ScriptCall::GetHistory, script)?;
 
-        Ok(serde_json::from_value(result)?)
+        Ok(serde_json::from_value::<ScriptHistoryResponse>(result)?.into())
     }
     fn batch_script_get_history<'s, I>(&self, scripts: I) -> Result<Vec<Vec<GetHistoryRes>>, Error>
     where
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>,
     {
-        impl_batch_call!(self, scripts, script_get_history)
+        impl_batch_call!(self, scripts, script_get_history, via ScriptHistoryResponse)
     }
 
     fn script_list_unspent(&self, script: &Script) -> Result<Vec<ListUnspentRes>, Error> {
-        let params = vec![Param::String(script.to_electrum_scripthash().to_hex())];
-        let req = Request::new_id(
-            self.last_id.fetch_add(1, Ordering::SeqCst),
-            "blockchain.scripthash.listunspent",
-            params,
-        );
-        let result = self.call(req)?;
-        let mut result: Vec<ListUnspentRes> = serde_json::from_value(result)?;
+        let result = self.script_call(ScriptCall::ListUnspent, script)?;
+        let mut result: Vec<ListUnspentRes> =
+            serde_json::from_value::<ScriptUtxosResponse>(result)?.into();
 
         // This should not be necessary, since the protocol documentation says that the txs should
         // be "in blockchain order" (https://electrumx.readthedocs.io/en/latest/protocol-methods.html#blockchain-scripthash-listunspent).
@@ -1243,7 +1264,7 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         I: IntoIterator + Clone,
         I::Item: Borrow<&'s Script>,
     {
-        impl_batch_call!(self, scripts, script_list_unspent)
+        impl_batch_call!(self, scripts, script_list_unspent, via ScriptUtxosResponse)
     }
 
     fn transaction_get_raw(&self, txid: &Txid) -> Result<Vec<u8>, Error> {
@@ -1568,6 +1589,27 @@ mod test {
             .expect("should build the `RawClient` successfully!")
     }
 
+    /// Returns live test clients that negotiated protocol v1.6 and v1.7, to exercise both the
+    /// `blockchain.scripthash.*` and the `blockchain.scriptpubkey.*` methods. Requires a test
+    /// server that speaks protocol v1.7.
+    fn get_script_test_clients() -> Vec<RawClient<ElectrumSslStream>> {
+        ["1.6", "1.7"]
+            .into_iter()
+            .map(|max| {
+                super::TEST_PROTOCOL_VERSION_MAX.with(|cell| cell.set(Some(max)));
+                let client = get_test_client();
+                super::TEST_PROTOCOL_VERSION_MAX.with(|cell| cell.set(None));
+
+                let negotiated = client.protocol_version().unwrap();
+                assert!(
+                    negotiated == max || negotiated == format!("{max}.0"),
+                    "test server negotiated {negotiated} instead of {max}"
+                );
+                client
+            })
+            .collect()
+    }
+
     #[test]
     fn test_protocol_version_returns_negotiated_version_without_new_request() {
         let stream = MockStream::new(server_version_response(0, "1.6"));
@@ -1615,6 +1657,247 @@ mod test {
             .unwrap();
 
         client.ping().unwrap();
+    }
+
+    /// Builds a client that negotiated `protocol_version`, with `results` queued as the
+    /// responses to the following requests (ids 1, 2, ...).
+    fn mock_client(
+        protocol_version: &str,
+        results: &[&str],
+    ) -> (RawClient<MockStream>, MockStream) {
+        let mut responses = server_version_response(0, protocol_version);
+        for (index, result) in results.iter().enumerate() {
+            let id = index + 1;
+            responses += &format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{result}}}"#);
+            responses += "\n";
+        }
+        let stream = MockStream::new(responses);
+        let handle = stream.clone();
+        let client = RawClient::from(stream)
+            .negotiate_protocol_version()
+            .unwrap();
+
+        (client, handle)
+    }
+
+    fn test_script(byte: u8) -> bitcoin::ScriptBuf {
+        let mut bytes = vec![0x00, 0x14];
+        bytes.extend_from_slice(&[byte; 20]);
+        bitcoin::ScriptBuf::from_bytes(bytes)
+    }
+
+    fn assert_script_request(
+        request: &serde_json::Value,
+        suffix: &str,
+        script: &bitcoin::Script,
+        scriptpubkey: bool,
+    ) {
+        use crate::ToElectrumScriptHash;
+        use bitcoin::hex::DisplayHex;
+
+        let (method, param) = if scriptpubkey {
+            (
+                format!("blockchain.scriptpubkey.{suffix}"),
+                script.as_bytes().to_lower_hex_string(),
+            )
+        } else {
+            (
+                format!("blockchain.scripthash.{suffix}"),
+                script.to_electrum_scripthash().to_hex(),
+            )
+        };
+
+        assert_eq!(request["method"], method);
+        assert_eq!(request["params"], serde_json::json!([param]));
+    }
+
+    const TXID_A: &str = "aa00000000000000000000000000000000000000000000000000000000000000";
+    const TXID_B: &str = "bb00000000000000000000000000000000000000000000000000000000000000";
+    const STATUS: &str = "cc00000000000000000000000000000000000000000000000000000000000000";
+
+    // Responses are newline-delimited, so these must stay on a single line.
+    const LEGACY_HISTORY: &str = concat!(
+        r#"[{"height":700000,"tx_hash":"aa00000000000000000000000000000000000000000000000000000000000000"},"#,
+        r#"{"height":-1,"tx_hash":"bb00000000000000000000000000000000000000000000000000000000000000","fee":250}]"#,
+    );
+    const LEGACY_UTXOS: &str = concat!(
+        r#"[{"height":700000,"tx_pos":1,"#,
+        r#""tx_hash":"aa00000000000000000000000000000000000000000000000000000000000000","value":5000}]"#,
+    );
+
+    fn v1_7_history() -> String {
+        format!(r#"{{"history":{LEGACY_HISTORY}}}"#)
+    }
+
+    fn v1_7_utxos() -> String {
+        format!(r#"{{"utxos":{LEGACY_UTXOS}}}"#)
+    }
+
+    /// Runs every single script call against a server speaking `protocol_version`, answering
+    /// history and unspent requests with `history` and `utxos`.
+    fn check_script_calls(protocol_version: &str, scriptpubkey: bool, history: &str, utxos: &str) {
+        use bitcoin::Txid;
+
+        let script = test_script(1);
+        let status = format!(r#""{STATUS}""#);
+        let (client, stream) = mock_client(
+            protocol_version,
+            &[
+                r#"{"confirmed":100,"unconfirmed":-5}"#,
+                history,
+                utxos,
+                &status,
+                "true",
+            ],
+        );
+
+        let balance = client.script_get_balance(&script).unwrap();
+        assert_eq!((balance.confirmed, balance.unconfirmed), (100, -5));
+
+        let history = client.script_get_history(&script).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].tx_hash, Txid::from_str(TXID_A).unwrap());
+        assert_eq!((history[0].height, history[0].fee), (700_000, None));
+        assert_eq!(history[1].tx_hash, Txid::from_str(TXID_B).unwrap());
+        assert_eq!((history[1].height, history[1].fee), (-1, Some(250)));
+
+        let utxos = client.script_list_unspent(&script).unwrap();
+        assert_eq!(utxos.len(), 1);
+        assert_eq!(utxos[0].tx_hash, Txid::from_str(TXID_A).unwrap());
+        assert_eq!(
+            (utxos[0].height, utxos[0].tx_pos, utxos[0].value),
+            (700_000, 1, 5000)
+        );
+
+        let status = client.script_subscribe(&script).unwrap().unwrap();
+        assert_eq!(status.to_hex(), STATUS);
+        assert!(client.script_unsubscribe(&script).unwrap());
+
+        let requests = stream.written_requests();
+        assert_eq!(requests.len(), 6);
+        let suffixes = [
+            "get_balance",
+            "get_history",
+            "listunspent",
+            "subscribe",
+            "unsubscribe",
+        ];
+        for (request, suffix) in requests[1..].iter().zip(suffixes) {
+            assert_script_request(request, suffix, &script, scriptpubkey);
+        }
+    }
+
+    #[test]
+    fn script_calls_use_scripthash_methods_before_v1_7() {
+        for version in ["1.4", "1.6", "1.6.0"] {
+            check_script_calls(version, false, LEGACY_HISTORY, LEGACY_UTXOS);
+        }
+    }
+
+    #[test]
+    fn script_calls_use_scriptpubkey_methods_from_v1_7() {
+        for version in ["1.7", "1.7.0"] {
+            check_script_calls(version, true, &v1_7_history(), &v1_7_utxos());
+        }
+    }
+
+    fn check_batch_script_calls(
+        protocol_version: &str,
+        scriptpubkey: bool,
+        history: &str,
+        utxos: &str,
+    ) {
+        let scripts = [test_script(1), test_script(2)];
+        let script_refs: Vec<&bitcoin::Script> = scripts.iter().map(|s| s.as_script()).collect();
+        let balance = r#"{"confirmed":1,"unconfirmed":0}"#;
+        let status = format!(r#""{STATUS}""#);
+        let (client, stream) = mock_client(
+            protocol_version,
+            &[
+                balance, balance, history, history, utxos, utxos, &status, "null",
+            ],
+        );
+
+        assert_eq!(
+            client.batch_script_get_balance(&script_refs).unwrap().len(),
+            2
+        );
+        let histories = client.batch_script_get_history(&script_refs).unwrap();
+        assert_eq!(histories.iter().map(Vec::len).collect::<Vec<_>>(), [2, 2]);
+        let utxos = client.batch_script_list_unspent(&script_refs).unwrap();
+        assert_eq!(utxos.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1]);
+        let statuses = client.batch_script_subscribe(&script_refs).unwrap();
+        assert_eq!(statuses[0].unwrap().to_hex(), STATUS);
+        assert!(statuses[1].is_none());
+
+        let requests = stream.written_requests();
+        assert_eq!(requests.len(), 9);
+        let suffixes = ["get_balance", "get_history", "listunspent", "subscribe"];
+        for (pair, suffix) in requests[1..].chunks(2).zip(suffixes) {
+            for (request, script) in pair.iter().zip(&scripts) {
+                assert_script_request(request, suffix, script, scriptpubkey);
+            }
+        }
+    }
+
+    #[test]
+    fn batch_script_calls_use_scripthash_methods_before_v1_7() {
+        check_batch_script_calls("1.6", false, LEGACY_HISTORY, LEGACY_UTXOS);
+    }
+
+    #[test]
+    fn batch_script_calls_use_scriptpubkey_methods_from_v1_7() {
+        check_batch_script_calls("1.7", true, &v1_7_history(), &v1_7_utxos());
+    }
+
+    #[test]
+    fn batch_iter_yields_scripthash_form() {
+        use crate::{Batch, ToElectrumScriptHash};
+
+        let script = test_script(1);
+        let mut batch = Batch::default();
+        batch.script_get_balance(&script);
+        batch.raw("server.ping".to_string(), vec![]);
+
+        let methods: Vec<_> = batch.iter().map(|(method, _)| method.clone()).collect();
+        assert_eq!(
+            methods,
+            ["blockchain.scripthash.get_balance", "server.ping"]
+        );
+        let (_, params) = batch.iter().next().unwrap();
+        assert_eq!(
+            serde_json::to_value(params).unwrap(),
+            serde_json::json!([script.to_electrum_scripthash().to_hex()])
+        );
+    }
+
+    #[test]
+    fn scriptpubkey_notification_is_queued_for_subscribed_script() {
+        use crate::ToElectrumScriptHash;
+
+        let script = test_script(1);
+        let scripthash = script.to_electrum_scripthash().to_hex();
+        let responses = server_version_response(0, "1.7")
+            + r#"{"jsonrpc":"2.0","id":1,"result":null}"#
+            + "\n"
+            + &format!(
+                r#"{{"jsonrpc":"2.0","method":"blockchain.scriptpubkey.subscribe","params":["{scripthash}","{STATUS}"]}}"#
+            )
+            + "\n"
+            + r#"{"jsonrpc":"2.0","id":2,"result":null}"#
+            + "\n";
+        let client = RawClient::from(MockStream::new(responses))
+            .negotiate_protocol_version()
+            .unwrap();
+
+        assert!(client.script_subscribe(&script).unwrap().is_none());
+        client.ping().unwrap();
+
+        assert_eq!(
+            client.script_pop(&script).unwrap().unwrap().to_hex(),
+            STATUS
+        );
+        assert!(client.script_pop(&script).unwrap().is_none());
     }
 
     #[test]
@@ -1722,15 +2005,15 @@ mod test {
     fn test_script_get_balance() {
         use std::str::FromStr;
 
-        let client = get_test_client();
-
-        // Realistically nobody will ever spend from this address, so we can expect the balance to
-        // increase over time
-        let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr")
-            .unwrap()
-            .assume_checked();
-        let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
-        assert!(resp.confirmed >= 213091301265);
+        for client in get_script_test_clients() {
+            // Realistically nobody will ever spend from this address, so we can expect the balance to
+            // increase over time
+            let addr = bitcoin::Address::from_str("1CounterpartyXXXXXXXXXXXXXXXUWLpVr")
+                .unwrap()
+                .assume_checked();
+            let resp = client.script_get_balance(&addr.script_pubkey()).unwrap();
+            assert!(resp.confirmed >= 213091301265);
+        }
     }
 
     #[test]
@@ -1739,20 +2022,20 @@ mod test {
 
         use bitcoin::Txid;
 
-        let client = get_test_client();
-
-        // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
-            .unwrap()
-            .assume_checked();
-        let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
-
-        assert!(resp.len() >= 328);
-        assert_eq!(
-            resp[0].tx_hash,
-            Txid::from_str("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
+        for client in get_script_test_clients() {
+            // Mt.Gox hack address
+            let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
                 .unwrap()
-        );
+                .assume_checked();
+            let resp = client.script_get_history(&addr.script_pubkey()).unwrap();
+
+            assert!(resp.len() >= 328);
+            assert_eq!(
+                resp[0].tx_hash,
+                Txid::from_str("e67a0550848b7932d7796aeea16ab0e48a5cfe81c4e8cca2c5b03e0416850114")
+                    .unwrap()
+            );
+        }
     }
 
     #[test]
@@ -1760,41 +2043,41 @@ mod test {
         use bitcoin::Txid;
         use std::str::FromStr;
 
-        let client = get_test_client();
+        for client in get_script_test_clients() {
+            // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+            let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+                .unwrap()
+                .assume_checked();
+            let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
 
-        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-        let addr = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
-            .unwrap()
-            .assume_checked();
-        let resp = client.script_list_unspent(&addr.script_pubkey()).unwrap();
-
-        assert!(resp.len() >= 9);
-        let txid = "397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0";
-        let txid = Txid::from_str(txid).unwrap();
-        let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
-        assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].value, 10000000);
-        assert_eq!(txs[0].height, 257674);
-        assert_eq!(txs[0].tx_pos, 1);
+            assert!(resp.len() >= 9);
+            let txid = "397f12ee15f8a3d2ab25c0f6bb7d3c64d2038ca056af10dd8251b98ae0f076b0";
+            let txid = Txid::from_str(txid).unwrap();
+            let txs: Vec<_> = resp.iter().filter(|e| e.tx_hash == txid).collect();
+            assert_eq!(txs.len(), 1);
+            assert_eq!(txs[0].value, 10000000);
+            assert_eq!(txs[0].height, 257674);
+            assert_eq!(txs[0].tx_pos, 1);
+        }
     }
 
     #[test]
     fn test_batch_script_list_unspent() {
         use std::str::FromStr;
 
-        let client = get_test_client();
+        for client in get_script_test_clients() {
+            // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
+            let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
+                .unwrap()
+                .assume_checked()
+                .script_pubkey();
 
-        // Peter todd's sha256 bounty address https://bitcointalk.org/index.php?topic=293382.0
-        let script_1 = bitcoin::Address::from_str("35Snmmy3uhaer2gTboc81ayCip4m9DT4ko")
-            .unwrap()
-            .assume_checked()
-            .script_pubkey();
-
-        let resp = client
-            .batch_script_list_unspent(vec![script_1.as_script()])
-            .unwrap();
-        assert_eq!(resp.len(), 1);
-        assert!(resp[0].len() >= 9);
+            let resp = client
+                .batch_script_list_unspent(vec![script_1.as_script()])
+                .unwrap();
+            assert_eq!(resp.len(), 1);
+            assert!(resp[0].len() >= 9);
+        }
     }
 
     #[test]
@@ -2045,15 +2328,15 @@ mod test {
     fn test_script_subscribe() {
         use std::str::FromStr;
 
-        let client = get_test_client();
+        for client in get_script_test_clients() {
+            // Mt.Gox hack address
+            let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
+                .unwrap()
+                .assume_checked();
 
-        // Mt.Gox hack address
-        let addr = bitcoin::Address::from_str("1FeexV6bAHb8ybZjqQMjJrcCrHGW9sb6uF")
-            .unwrap()
-            .assume_checked();
-
-        // Just make sure that the call returns Ok(something)
-        client.script_subscribe(&addr.script_pubkey()).unwrap();
+            // Just make sure that the call returns Ok(something)
+            client.script_subscribe(&addr.script_pubkey()).unwrap();
+        }
     }
 
     #[test]
