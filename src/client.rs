@@ -55,11 +55,7 @@ macro_rules! impl_inner_call {
             drop(read_client);
             match res {
                 Ok(val) => return Ok(val),
-                Err(
-                    Error::Protocol(_)
-                    | Error::AlreadySubscribed(_)
-                    | Error::AlreadySubscribedOutpoint(_),
-                ) => {
+                Err(ref e) if !is_retryable(e) => {
                     return res;
                 },
                 Err(e) => {
@@ -105,6 +101,19 @@ macro_rules! impl_inner_call {
             }
         }}
     }
+}
+
+/// Whether a failed call may succeed on a new connection. Errors returned by the server or
+/// caused by the client's own subscription bookkeeping would just recur.
+fn is_retryable(error: &Error) -> bool {
+    !matches!(
+        error,
+        Error::Protocol(_)
+            | Error::AlreadySubscribed(_)
+            | Error::NotSubscribed(_)
+            | Error::AlreadySubscribedOutpoint(_)
+            | Error::NotSubscribedOutpoint(_)
+    )
 }
 
 fn retries_exhausted(failed_attempts: usize, configured_retries: u8) -> bool {
@@ -498,6 +507,24 @@ impl ElectrumApi for Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscription_bookkeeping_errors_are_not_retried() {
+        use bitcoin::hashes::Hash;
+        use bitcoin::{OutPoint, Txid};
+
+        let scripthash = ScriptHash::from([0; 32]);
+        let outpoint = OutPoint::new(Txid::all_zeros(), 0);
+
+        assert!(!is_retryable(&Error::Protocol(serde_json::Value::Null)));
+        assert!(!is_retryable(&Error::AlreadySubscribed(scripthash)));
+        assert!(!is_retryable(&Error::NotSubscribed(scripthash)));
+        assert!(!is_retryable(&Error::AlreadySubscribedOutpoint(outpoint)));
+        assert!(!is_retryable(&Error::NotSubscribedOutpoint(outpoint)));
+        assert!(is_retryable(&Error::IOError(
+            std::io::ErrorKind::BrokenPipe.into()
+        )));
+    }
 
     #[test]
     fn more_failed_attempts_than_retries_means_exhausted() {
