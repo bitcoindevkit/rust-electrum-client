@@ -11,6 +11,16 @@
 //!
 //! For a minimal configuration the library can be built with `--no-default-features`, which only includes the plaintext TCP client.
 //!
+//! # Protocol versions
+//!
+//! The client negotiates [Electrum protocol](https://electrum-protocol.readthedocs.io/) versions
+//! [`PROTOCOL_VERSION_MIN`](raw_client::PROTOCOL_VERSION_MIN) up to
+//! [`PROTOCOL_VERSION_MAX`](raw_client::PROTOCOL_VERSION_MAX) when connecting. Script calls such as
+//! [`script_get_history`](ElectrumApi::script_get_history) are sent in the form the negotiated
+//! version expects. Methods added in a later protocol version, such as
+//! [`outpoint_subscribe`](ElectrumApi::outpoint_subscribe), return an error from servers that
+//! don't support them.
+//!
 //! # Example
 //!
 //! ```no_run

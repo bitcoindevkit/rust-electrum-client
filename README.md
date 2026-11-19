@@ -10,6 +10,15 @@
 
 Bitcoin Electrum client library. Supports plaintext, TLS and Onion servers.
 
+## Electrum Protocol Versions
+
+The client negotiates [Electrum protocol](https://electrum-protocol.readthedocs.io/)
+versions 1.4 up to 1.7 with the server. Script calls such as
+`script_get_history` work with every version and are sent in the form the
+negotiated version expects. Methods added in a later version, such as the
+outpoint subscriptions of protocol 1.7, return an error from servers that
+don't support them.
+
 ## Security Policy
 
 To report a security issue, please refer to the [security policy](SECURITY.md).
