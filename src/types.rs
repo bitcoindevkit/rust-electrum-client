@@ -209,6 +209,19 @@ impl ScriptCall {
     }
 }
 
+/// Parameters of the `blockchain.outpoint.*` calls, with `spk_hint` as the last one if given.
+pub(crate) fn outpoint_params(outpoint: &OutPoint, spk_hint: Option<&Script>) -> Vec<Param> {
+    let mut params = vec![
+        Param::String(outpoint.txid.to_string()),
+        Param::U32(outpoint.vout),
+    ];
+    if let Some(script) = spk_hint {
+        params.push(Param::String(script.as_bytes().to_lower_hex_string()));
+    }
+
+    params
+}
+
 /// History or mempool transactions of a script, as a bare list (protocol v1.6 and older) or wrapped in a
 /// `{"history": [..]}` object (protocol v1.7).
 #[derive(Deserialize)]

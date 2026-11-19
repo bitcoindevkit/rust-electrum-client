@@ -4,9 +4,9 @@
 //!
 //! This module contains definitions and helper functions used when making batch calls.
 
-use bitcoin::{Script, ScriptBuf, Txid};
+use bitcoin::{OutPoint, Script, ScriptBuf, Txid};
 
-use crate::types::{Call, EstimationMode, Param, ScriptCall};
+use crate::types::{outpoint_params, Call, EstimationMode, Param, ScriptCall};
 
 /// Helper structure that caches all the requests before they are actually sent to the server.
 ///
@@ -90,6 +90,14 @@ impl Batch {
             Param::Usize(*height),
         ];
         self.raw(String::from("blockchain.transaction.get_merkle"), params);
+    }
+
+    /// Add one `blockchain.outpoint.get_status` request for an outpoint and its scriptPubKey to
+    /// the batch queue
+    pub fn outpoint_get_status(&mut self, outpoint_and_script: &(OutPoint, ScriptBuf)) {
+        let (outpoint, script) = outpoint_and_script;
+        let params = outpoint_params(outpoint, Some(script));
+        self.raw(String::from("blockchain.outpoint.get_status"), params);
     }
 
     /// Add one `blockchain.estimatefee` request to the batch queue

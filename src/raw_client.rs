@@ -19,7 +19,7 @@ use log::{debug, error, info, trace, warn};
 
 use bitcoin::consensus::encode::deserialize;
 use bitcoin::hex::{DisplayHex, FromHex};
-use bitcoin::{OutPoint, Script, Txid};
+use bitcoin::{OutPoint, Script, ScriptBuf, Txid};
 
 #[cfg(feature = "openssl")]
 use openssl::ssl::{SslConnector, SslMethod, SslStream, SslVerifyMode};
@@ -964,22 +964,13 @@ impl<S: Read + Write> RawClient<S> {
         Ok(())
     }
 
-    /// Sends an outpoint call, with `spk_hint` as the last parameter if given.
     fn outpoint_call(
         &self,
         method: &str,
         outpoint: &OutPoint,
         spk_hint: Option<&Script>,
     ) -> Result<serde_json::Value, Error> {
-        let mut params = vec![
-            Param::String(outpoint.txid.to_string()),
-            Param::U32(outpoint.vout),
-        ];
-        if let Some(script) = spk_hint {
-            params.push(Param::String(script.as_bytes().to_lower_hex_string()));
-        }
-
-        self.internal_raw_call_with_vec(method, params)
+        self.internal_raw_call_with_vec(method, outpoint_params(outpoint, spk_hint))
     }
 
     pub(crate) fn internal_raw_call_with_vec(
@@ -1362,6 +1353,14 @@ impl<T: Read + Write> ElectrumApi for RawClient<T> {
         let value = self.outpoint_call("blockchain.outpoint.get_status", outpoint, Some(script))?;
 
         Ok(serde_json::from_value(value)?)
+    }
+
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>,
+    {
+        impl_batch_call!(self, outpoints, outpoint_get_status)
     }
 
     fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
@@ -2149,6 +2148,36 @@ mod test {
     }
 
     #[test]
+    fn batch_outpoint_get_status_sends_one_request_per_outpoint() {
+        let first = (test_outpoint(), test_script(1));
+        let second = (bitcoin::OutPoint::new(first.0.txid, 7), test_script(2));
+        let (client, stream) = mock_client(
+            "1.7",
+            &[
+                r#"{"funder_height":700000}"#,
+                &format!(
+                    r#"{{"funder_height":700000,"spender_txhash":"{TXID_B}","spender_height":0}}"#
+                ),
+            ],
+        );
+
+        let statuses = client
+            .batch_outpoint_get_status(&[first.clone(), second.clone()])
+            .unwrap();
+
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(statuses[0].funder_height, Some(700_000));
+        assert_eq!(statuses[0].spender_txhash, None);
+        assert_eq!(statuses[1].spender_height, Some(0));
+
+        let requests = stream.written_requests();
+        assert_eq!(requests.len(), 3);
+        let method = "blockchain.outpoint.get_status";
+        assert_outpoint_request(&requests[1], method, &first.0, Some(&first.1));
+        assert_outpoint_request(&requests[2], method, &second.0, Some(&second.1));
+    }
+
+    #[test]
     fn outpoint_notifications_are_queued_per_subscription() {
         let outpoint = test_outpoint();
         let other_outpoint = bitcoin::OutPoint::new(outpoint.txid, 4);
@@ -2768,6 +2797,10 @@ mod test {
             client.outpoint_get_status(&outpoint, &script).unwrap(),
             expected
         );
+        let batch = client
+            .batch_outpoint_get_status([(outpoint, script.clone())])
+            .unwrap();
+        assert_eq!(batch, std::slice::from_ref(&expected));
         assert_eq!(
             client.outpoint_subscribe(&outpoint, &script).unwrap(),
             expected

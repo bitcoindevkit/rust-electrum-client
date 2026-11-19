@@ -7,7 +7,7 @@ use std::convert::TryInto;
 use std::ops::Deref;
 
 use bitcoin::consensus::encode::{deserialize, serialize};
-use bitcoin::{block, OutPoint, Script, Transaction, Txid};
+use bitcoin::{block, OutPoint, Script, ScriptBuf, Transaction, Txid};
 
 use crate::batch::Batch;
 use crate::raw_client::{CLIENT_NAME, PROTOCOL_VERSION_MAX, PROTOCOL_VERSION_MIN};
@@ -142,6 +142,14 @@ where
         script: &Script,
     ) -> Result<OutpointStatus, Error> {
         (**self).outpoint_get_status(outpoint, script)
+    }
+
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>,
+    {
+        (**self).batch_outpoint_get_status(outpoints)
     }
 
     fn outpoint_pop(&self, outpoint: &OutPoint) -> Result<Option<OutpointStatus>, Error> {
@@ -495,6 +503,17 @@ pub trait ElectrumApi {
         script: &Script,
     ) -> Result<OutpointStatus, Error>;
 
+    /// Batch version of [`outpoint_get_status`](#method.outpoint_get_status).
+    ///
+    /// Takes a list of outpoints, each with its scriptPubKey, and returns their statuses in the
+    /// same order.
+    ///
+    /// This method was added in protocol v1.7.
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>;
+
     /// Tries to pop one queued notification for the requested outpoint. Returns `None` if there
     /// are no items in the queue.
     ///
@@ -799,6 +818,17 @@ mod test {
             _: &bitcoin::OutPoint,
             _: &bitcoin::Script,
         ) -> Result<super::OutpointStatus, super::Error> {
+            unreachable!()
+        }
+
+        fn batch_outpoint_get_status<I>(
+            &self,
+            _: I,
+        ) -> Result<Vec<super::OutpointStatus>, super::Error>
+        where
+            I: IntoIterator + Clone,
+            I::Item: std::borrow::Borrow<(bitcoin::OutPoint, bitcoin::ScriptBuf)>,
+        {
             unreachable!()
         }
 

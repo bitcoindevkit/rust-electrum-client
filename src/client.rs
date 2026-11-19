@@ -6,7 +6,7 @@ use std::{borrow::Borrow, sync::RwLock};
 
 use log::{info, warn};
 
-use bitcoin::{OutPoint, Script, Txid};
+use bitcoin::{OutPoint, Script, ScriptBuf, Txid};
 
 use crate::api::ElectrumApi;
 use crate::batch::Batch;
@@ -378,6 +378,15 @@ impl ElectrumApi for Client {
         script: &Script,
     ) -> Result<OutpointStatus, Error> {
         impl_inner_call!(self, outpoint_get_status, outpoint, script)
+    }
+
+    #[inline]
+    fn batch_outpoint_get_status<I>(&self, outpoints: I) -> Result<Vec<OutpointStatus>, Error>
+    where
+        I: IntoIterator + Clone,
+        I::Item: Borrow<(OutPoint, ScriptBuf)>,
+    {
+        impl_inner_call!(self, batch_outpoint_get_status, outpoints.clone())
     }
 
     #[inline]
