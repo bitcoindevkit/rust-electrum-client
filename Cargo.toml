@@ -53,3 +53,5 @@ use-openssl = ["openssl"]
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 bitreq = { version = "0.3.4", features = ["async-https", "json-using-serde"] }
+# used to generate certificates for the `custom_rustls_config` integration test
+rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs"] }

@@ -412,11 +412,15 @@ pub type ElectrumSslStream = StreamOwned<ClientConnection, TcpStream>;
 impl RawClient<ElectrumSslStream> {
     /// Creates a new SSL client and tries to connect to `socket_addr`. Optionally, if
     /// `validate_domain` is `true`, validate the server's certificate.
+    ///
+    /// If `rustls_config` is `Some`, the provided [`rustls::ClientConfig`] is used as-is
+    /// and `validate_domain` is ignored.
     pub fn new_ssl<A: ToSocketAddrsDomain + Clone>(
         socket_addrs: A,
         validate_domain: bool,
         timeout: Option<Duration>,
         auth_provider: Option<AuthProvider>,
+        rustls_config: Option<Arc<ClientConfig>>,
     ) -> Result<Self, Error> {
         debug!(
             "new_ssl socket_addrs.domain():{:?} validate_domain:{} timeout:{:?}",
@@ -434,21 +438,37 @@ impl RawClient<ElectrumSslStream> {
                 let stream = connect_with_total_timeout(socket_addrs.clone(), timeout)?;
                 stream.set_read_timeout(Some(timeout))?;
                 stream.set_write_timeout(Some(timeout))?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream, auth_provider)
+                Self::new_ssl_from_stream(
+                    socket_addrs,
+                    validate_domain,
+                    stream,
+                    auth_provider,
+                    rustls_config,
+                )
             }
             None => {
                 let stream = TcpStream::connect(socket_addrs.clone())?;
-                Self::new_ssl_from_stream(socket_addrs, validate_domain, stream, auth_provider)
+                Self::new_ssl_from_stream(
+                    socket_addrs,
+                    validate_domain,
+                    stream,
+                    auth_provider,
+                    rustls_config,
+                )
             }
         }
     }
 
     /// Create a new SSL client using an existing TcpStream
+    ///
+    /// If `rustls_config` is `Some`, the provided [`rustls::ClientConfig`] is used as-is
+    /// and `validate_domain` is ignored.
     pub fn new_ssl_from_stream<A: ToSocketAddrsDomain>(
         socket_addr: A,
         validate_domain: bool,
         tcp_stream: TcpStream,
         auth_provider: Option<AuthProvider>,
+        rustls_config: Option<Arc<ClientConfig>>,
     ) -> Result<Self, Error> {
         use std::convert::TryFrom;
 
@@ -483,9 +503,11 @@ impl RawClient<ElectrumSslStream> {
             })?;
         }
 
-        let builder = ClientConfig::builder();
-
-        let config = if validate_domain {
+        let config = if let Some(rustls_config) = rustls_config {
+            // A caller-provided configuration is used as-is and takes precedence
+            // over `validate_domain`.
+            rustls_config.as_ref().clone()
+        } else if validate_domain {
             socket_addr.domain().ok_or(Error::MissingDomain)?;
 
             let store = RootCertStore {
@@ -493,9 +515,11 @@ impl RawClient<ElectrumSslStream> {
             };
 
             // TODO: cert pinning
-            builder.with_root_certificates(store).with_no_client_auth()
+            ClientConfig::builder()
+                .with_root_certificates(store)
+                .with_no_client_auth()
         } else {
-            builder
+            ClientConfig::builder()
                 .dangerous()
                 .with_custom_certificate_verifier(std::sync::Arc::new(
                     #[cfg(all(feature = "rustls", not(feature = "rustls-ring")))]
@@ -557,20 +581,17 @@ impl RawClient<ElectrumProxyStream> {
         Ok(client)
     }
 
+    /// Connects to `target_addr` through the socks proxy and returns the resolved target
+    /// together with the established (plaintext) TCP stream.
     #[cfg(all(
-        any(feature = "openssl", feature = "rustls", feature = "rustls-ring",),
+        any(feature = "openssl", feature = "rustls", feature = "rustls-ring"),
         feature = "proxy",
     ))]
-    /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
-    /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
-    /// allows to specify, for instance, `.onion` addresses.
-    pub fn new_proxy_ssl<T: ToTargetAddr>(
+    fn connect_proxy_ssl_stream<T: ToTargetAddr>(
         target_addr: T,
-        validate_domain: bool,
         proxy: &crate::Socks5Config,
         timeout: Option<Duration>,
-        auth_provider: Option<AuthProvider>,
-    ) -> Result<RawClient<ElectrumSslStream>, Error> {
+    ) -> Result<(TargetAddr, TcpStream), Error> {
         let target = target_addr.to_target_addr()?;
 
         let mut stream = match proxy.credentials.as_ref() {
@@ -587,7 +608,55 @@ impl RawClient<ElectrumProxyStream> {
         stream.get_mut().set_read_timeout(timeout)?;
         stream.get_mut().set_write_timeout(timeout)?;
 
-        RawClient::new_ssl_from_stream(target, validate_domain, stream.into_inner(), auth_provider)
+        Ok((target, stream.into_inner()))
+    }
+
+    #[cfg(all(
+        all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl"),
+        ),
+        feature = "proxy",
+    ))]
+    /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
+    /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
+    /// allows to specify, for instance, `.onion` addresses.
+    ///
+    /// If `rustls_config` is `Some`, the provided [`rustls::ClientConfig`] is used as-is and
+    /// `validate_domain` is ignored.
+    pub fn new_proxy_ssl<T: ToTargetAddr>(
+        target_addr: T,
+        validate_domain: bool,
+        proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+        rustls_config: Option<Arc<ClientConfig>>,
+    ) -> Result<RawClient<ElectrumSslStream>, Error> {
+        let (target, stream) = Self::connect_proxy_ssl_stream(target_addr, proxy, timeout)?;
+
+        RawClient::new_ssl_from_stream(
+            target,
+            validate_domain,
+            stream,
+            auth_provider,
+            rustls_config,
+        )
+    }
+
+    #[cfg(all(feature = "openssl", feature = "proxy"))]
+    /// Creates a new TLS client that connects to `target_addr` using `proxy_addr` as a socks proxy
+    /// server. The DNS resolution of `target_addr`, if required, is done through the proxy. This
+    /// allows to specify, for instance, `.onion` addresses.
+    pub fn new_proxy_ssl<T: ToTargetAddr>(
+        target_addr: T,
+        validate_domain: bool,
+        proxy: &crate::Socks5Config,
+        timeout: Option<Duration>,
+        auth_provider: Option<AuthProvider>,
+    ) -> Result<RawClient<ElectrumSslStream>, Error> {
+        let (target, stream) = Self::connect_proxy_ssl_stream(target_addr, proxy, timeout)?;
+
+        RawClient::new_ssl_from_stream(target, validate_domain, stream, auth_provider)
     }
 }
 
@@ -1552,16 +1621,36 @@ mod test {
         let server = std::env::var("TEST_ELECTRUM_SERVER")
             .unwrap_or(DEFAULT_TEST_ELECTRUM_SERVER.to_owned());
 
-        RawClient::new_ssl(&*server, false, None, authorization_provider)
-            .expect("should build the `RawClient` successfully!")
+        #[cfg(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl")
+        ))]
+        let client = RawClient::new_ssl(&*server, false, None, authorization_provider, None);
+        #[cfg(not(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl")
+        )))]
+        let client = RawClient::new_ssl(&*server, false, None, authorization_provider);
+
+        client.expect("should build the `RawClient` successfully!")
     }
 
     fn get_test_client() -> RawClient<ElectrumSslStream> {
         let server = std::env::var("TEST_ELECTRUM_SERVER")
             .unwrap_or(DEFAULT_TEST_ELECTRUM_SERVER.to_owned());
 
-        RawClient::new_ssl(&*server, false, None, None)
-            .expect("should build the `RawClient` successfully!")
+        #[cfg(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl")
+        ))]
+        let client = RawClient::new_ssl(&*server, false, None, None, None);
+        #[cfg(not(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl")
+        )))]
+        let client = RawClient::new_ssl(&*server, false, None, None);
+
+        client.expect("should build the `RawClient` successfully!")
     }
 
     #[test]

@@ -3,6 +3,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(all(
+    any(feature = "rustls", feature = "rustls-ring"),
+    not(feature = "openssl")
+))]
+use rustls::ClientConfig;
+
 /// A function that provides authorization tokens dynamically (e.g., for JWT refresh)
 pub type AuthProvider = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
@@ -24,12 +30,24 @@ pub struct Config {
     validate_domain: bool,
     /// Optional authorization provider for dynamic token injection
     authorization_provider: Option<AuthProvider>,
+    /// Optional caller-provided rustls configuration for `ssl://` connections.
+    ///
+    /// When set, this configuration is used as-is and takes precedence over
+    /// [`Config::validate_domain`]. It allows the caller to fully control TLS,
+    /// for example to trust a private/self-signed CA, to use the operating
+    /// system's trust store, or to plug in a custom certificate verifier.
+    #[cfg(all(
+        any(feature = "rustls", feature = "rustls-ring"),
+        not(feature = "openssl")
+    ))]
+    rustls_config: Option<Arc<ClientConfig>>,
 }
 
 // Custom Debug impl because AuthProvider doesn't implement Debug
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Config")
+        let mut debug = f.debug_struct("Config");
+        debug
             .field("socks5", &self.socks5)
             .field("timeout", &self.timeout)
             .field("retry", &self.retry)
@@ -37,8 +55,16 @@ impl std::fmt::Debug for Config {
             .field(
                 "authorization_provider",
                 &self.authorization_provider.as_ref().map(|_| "<provider>"),
-            )
-            .finish()
+            );
+        #[cfg(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl")
+        ))]
+        debug.field(
+            "rustls_config",
+            &self.rustls_config.as_ref().map(|_| "<ClientConfig>"),
+        );
+        debug.finish()
     }
 }
 
@@ -99,6 +125,25 @@ impl ConfigBuilder {
     /// Sets the authorization provider for dynamic token injection
     pub fn authorization_provider(mut self, provider: Option<AuthProvider>) -> Self {
         self.config.authorization_provider = provider;
+        self
+    }
+
+    /// Sets a caller-provided rustls configuration used for `ssl://` connections.
+    ///
+    /// When set, the provided [`rustls::ClientConfig`] is used as-is and
+    /// [`ConfigBuilder::validate_domain`] is ignored. This makes it possible to
+    /// trust certificates that are not in the bundled `webpki` root store, such
+    /// as a private or self-signed CA, to use the operating system's trust
+    /// store, or to install a custom certificate verifier.
+    ///
+    /// Only available when the `rustls` or `rustls-ring` feature is enabled and
+    /// the `openssl` feature is disabled.
+    #[cfg(all(
+        any(feature = "rustls", feature = "rustls-ring"),
+        not(feature = "openssl")
+    ))]
+    pub fn rustls_config(mut self, rustls_config: Option<Arc<ClientConfig>>) -> Self {
+        self.config.rustls_config = rustls_config;
         self
     }
 
@@ -168,6 +213,17 @@ impl Config {
         self.authorization_provider.as_ref()
     }
 
+    /// Get the caller-provided rustls configuration, if any.
+    ///
+    /// Set this with [`ConfigBuilder::rustls_config`]
+    #[cfg(all(
+        any(feature = "rustls", feature = "rustls-ring"),
+        not(feature = "openssl")
+    ))]
+    pub fn rustls_config(&self) -> Option<&Arc<ClientConfig>> {
+        self.rustls_config.as_ref()
+    }
+
     /// Convenience method for calling [`ConfigBuilder::new`]
     pub fn builder() -> ConfigBuilder {
         ConfigBuilder::new()
@@ -182,6 +238,11 @@ impl Default for Config {
             retry: 1,
             validate_domain: true,
             authorization_provider: None,
+            #[cfg(all(
+                any(feature = "rustls", feature = "rustls-ring"),
+                not(feature = "openssl")
+            ))]
+            rustls_config: None,
         }
     }
 }
@@ -282,5 +343,50 @@ mod tests {
 
         // Should show None for authorization_provider
         assert!(debug_str.contains("authorization_provider"));
+    }
+
+    #[cfg(all(
+        any(feature = "rustls", feature = "rustls-ring"),
+        not(feature = "openssl")
+    ))]
+    #[test]
+    fn test_rustls_config_is_none_by_default() {
+        let config = ConfigBuilder::new().build();
+        assert!(config.rustls_config().is_none());
+    }
+
+    #[cfg(all(
+        any(feature = "rustls", feature = "rustls-ring"),
+        not(feature = "openssl")
+    ))]
+    #[test]
+    fn test_rustls_config_builder_roundtrip() {
+        use rustls::RootCertStore;
+
+        #[cfg(feature = "rustls-ring")]
+        let provider = rustls::crypto::ring::default_provider();
+        #[cfg(not(feature = "rustls-ring"))]
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+
+        let rustls_config = Arc::new(
+            rustls::ClientConfig::builder_with_provider(Arc::new(provider))
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(RootCertStore::empty())
+                .with_no_client_auth(),
+        );
+
+        let config = ConfigBuilder::new()
+            .rustls_config(Some(rustls_config.clone()))
+            .build();
+
+        let stored = config
+            .rustls_config()
+            .expect("custom rustls configuration must be stored");
+        assert!(Arc::ptr_eq(stored, &rustls_config));
+
+        // The custom configuration must not be dumped in full by the Debug impl.
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("<ClientConfig>"));
     }
 }
