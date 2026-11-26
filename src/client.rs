@@ -116,7 +116,47 @@ impl ClientType {
     pub fn from_config(url: &str, config: &Config) -> Result<Self, Error> {
         let auth_provider = config.authorization_provider().cloned();
 
-        #[cfg(any(feature = "openssl", feature = "rustls", feature = "rustls-ring"))]
+        // rustls backend. When the `openssl` feature is also enabled it takes precedence and
+        // this block is compiled out instead (see below).
+        #[cfg(all(
+            any(feature = "rustls", feature = "rustls-ring"),
+            not(feature = "openssl"),
+        ))]
+        if url.starts_with("ssl://") {
+            let url = url.replacen("ssl://", "", 1);
+            let rustls_config = config.rustls_config().cloned();
+            #[cfg(feature = "proxy")]
+            let raw_client = match config.socks5() {
+                Some(socks5) => RawClient::new_proxy_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    socks5,
+                    config.timeout(),
+                    auth_provider,
+                    rustls_config,
+                )?,
+                None => RawClient::new_ssl(
+                    url.as_str(),
+                    config.validate_domain(),
+                    config.timeout(),
+                    auth_provider,
+                    rustls_config,
+                )?,
+            };
+            #[cfg(not(feature = "proxy"))]
+            let raw_client = RawClient::new_ssl(
+                url.as_str(),
+                config.validate_domain(),
+                config.timeout(),
+                auth_provider,
+                rustls_config,
+            )?;
+
+            return Ok(ClientType::SSL(raw_client));
+        }
+
+        // openssl backend
+        #[cfg(feature = "openssl")]
         if url.starts_with("ssl://") {
             let url = url.replacen("ssl://", "", 1);
             #[cfg(feature = "proxy")]
